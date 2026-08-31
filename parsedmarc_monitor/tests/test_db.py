@@ -14,6 +14,22 @@ from dmarc_monitor.db import Database
 from dmarc_monitor.models import KnownSourceRule
 
 
+def test_query_deliveries_returns_paginated_delivery_details(tmp_path: Path) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    report = load_fixture()
+    db.persist_batch({"aggregate_reports": [report]}, rules())
+
+    result = db.query_deliveries("2026-08-29", "2026-08-29")
+
+    assert result.total == 2
+    assert len(result.items) == 2
+    assert result.items[0].dmarc_pass is False
+    assert result.items[0].reporting_org == "receiver.example"
+    assert result.items[0].report_id == "fixture-report-1"
+    assert result.items[0].header_from == "example.org"
+
+
 def load_fixture() -> dict:
     path = Path(__file__).parent / "fixtures" / "aggregate_report.json"
     return json.loads(path.read_text(encoding="utf-8"))

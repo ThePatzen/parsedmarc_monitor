@@ -5,12 +5,19 @@ import json
 import os
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from .classifier import match_known_source
-from .models import CountSummary, KnownSourceRule, PersistResult, ProblemSource
+from .models import (
+    CountSummary,
+    DeliveryDetail,
+    DeliveryPage,
+    KnownSourceRule,
+    PersistResult,
+    ProblemSource,
+)
 
 CURRENT_SCHEMA_VERSION = 2
 Migration = Callable[[sqlite3.Connection], None]
@@ -483,6 +490,70 @@ class Database:
             )
             for row in rows
         )
+
+    @staticmethod
+    def _delivery_where(
+        date_from: str, date_to: str, outcome: str, search: str
+    ) -> tuple[str, tuple[Any, ...]]:
+        try:
+            start = date.fromisoformat(date_from)
+            end = date.fromisoformat(date_to)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("delivery dates must be ISO dates") from exc
+        if end < start:
+            raise ValueError("delivery date range is reversed")
+        if outcome not in {"all", "passed", "failed"}:
+            raise ValueError("delivery outcome must be all, passed, or failed")
+        clauses = ["a.report_date >= ?", "a.report_date <= ?"]
+        params: list[Any] = [start.isoformat(), end.isoformat()]
+        if outcome != "all":
+            clauses.append("a.dmarc_pass = ?")
+            params.append(1 if outcome == "passed" else 0)
+        if search:
+            escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            clauses.append("(a.source_ip LIKE ? ESCAPE '\\' COLLATE NOCASE OR "
+                           "a.source_reverse_dns LIKE ? ESCAPE '\\' COLLATE NOCASE OR "
+                           "a.source_base_domain LIKE ? ESCAPE '\\' COLLATE NOCASE OR "
+                           "a.source_name LIKE ? ESCAPE '\\' COLLATE NOCASE OR "
+                           "a.header_from LIKE ? ESCAPE '\\' COLLATE NOCASE)")
+            params.extend([f"%{escaped}%"] * 5)
+        return " AND ".join(clauses), tuple(params)
+
+    @staticmethod
+    def _delivery_detail(row: sqlite3.Row) -> DeliveryDetail:
+        classification = ("known_" if row["known_source"] else "unknown_") + (
+            "pass" if row["dmarc_pass"] else "fail"
+        )
+        format_ts = lambda value: datetime.fromtimestamp(int(value), tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return DeliveryDetail(
+            id=int(row["id"]), report_date=str(row["report_date"]),
+            interval_begin=format_ts(row["interval_begin_ts"]), interval_end=format_ts(row["interval_end_ts"]),
+            reporting_org=str(row["org_name"]), report_id=str(row["report_id"]), policy_domain=str(row["policy_domain"]),
+            source_ip=str(row["source_ip"]), source_reverse_dns=row["source_reverse_dns"], source_base_domain=row["source_base_domain"],
+            source_name=row["source_name"], source_asn=int(row["source_asn"]) if row["source_asn"] is not None else None,
+            source_as_name=row["source_as_name"], source_country=row["source_country"], known_source_name=row["known_source_name"],
+            classification=classification, message_count=int(row["message_count"]), header_from=str(row["header_from"]),
+            envelope_from=row["envelope_from"], disposition=row["disposition"], dkim_result=row["dkim_result"], spf_result=row["spf_result"],
+            dkim_aligned=bool(row["dkim_aligned"]), spf_aligned=bool(row["spf_aligned"]), dmarc_pass=bool(row["dmarc_pass"]),
+        )
+
+    def query_deliveries(
+        self, date_from: str, date_to: str, outcome: str = "all", search: str = "", page: int = 1, page_size: int = 50
+    ) -> DeliveryPage:
+        if page < 1:
+            raise ValueError("delivery page must be positive")
+        if not 1 <= page_size <= 100:
+            raise ValueError("delivery page size must be between 1 and 100")
+        where, params = self._delivery_where(date_from, date_to, outcome, search)
+        base = "FROM aggregate_rows a JOIN reports r ON r.id = a.report_id_fk WHERE " + where
+        with self._connect() as connection:
+            total = int(connection.execute("SELECT COUNT(*) " + base, params).fetchone()[0])
+            rows = connection.execute(
+                "SELECT a.*, r.org_name, r.report_id, r.policy_domain " + base +
+                " ORDER BY a.dmarc_pass ASC, a.interval_end_ts DESC, a.id DESC LIMIT ? OFFSET ?",
+                params + (page_size, (page - 1) * page_size),
+            ).fetchall()
+        return DeliveryPage(tuple(self._delivery_detail(row) for row in rows), total, page, page_size)
 
     def delete_reports_ending_before(self, cutoff_ts: int) -> int:
         with self._connect() as connection:

@@ -61,6 +61,43 @@ class ProblemSource:
 
 
 @dataclass(frozen=True, slots=True)
+class DeliveryDetail:
+    id: int
+    report_date: str
+    interval_begin: str
+    interval_end: str
+    reporting_org: str
+    report_id: str
+    policy_domain: str
+    source_ip: str
+    source_reverse_dns: str | None
+    source_base_domain: str | None
+    source_name: str | None
+    source_asn: int | None
+    source_as_name: str | None
+    source_country: str | None
+    known_source_name: str | None
+    classification: str
+    message_count: int
+    header_from: str
+    envelope_from: str | None
+    disposition: str | None
+    dkim_result: str | None
+    spf_result: str | None
+    dkim_aligned: bool
+    spf_aligned: bool
+    dmarc_pass: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryPage:
+    items: tuple[DeliveryDetail, ...]
+    total: int
+    page: int
+    page_size: int
+
+
+@dataclass(frozen=True, slots=True)
 class MetricsSnapshot:
     latest_report_date: str | None
     messages_latest_period: int
