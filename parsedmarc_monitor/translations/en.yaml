@@ -1,0 +1,37 @@
+configuration:
+  imap_host:
+    name: IMAP host
+    description: Hostname or IP address of the dedicated mailbox server that receives DMARC reports.
+  imap_port:
+    name: IMAP port
+    description: IMAP server port. Port 993 is recommended for IMAPS.
+  imap_ssl:
+    name: Use IMAP SSL/TLS
+    description: Use an encrypted IMAPS connection. Keep this enabled unless the server explicitly requires otherwise.
+  imap_skip_certificate_verification:
+    name: Skip certificate verification
+    description: Disable validation of the IMAP server certificate. This reduces connection security and is not recommended.
+  imap_username:
+    name: IMAP username
+    description: Username for the dedicated DMARC report mailbox.
+  imap_password:
+    name: IMAP password
+    description: Password for the dedicated DMARC report mailbox.
+  reports_folder:
+    name: Reports folder
+    description: IMAP folder parsedmarc watches for incoming reports.
+  archive_folder:
+    name: Archive folder
+    description: IMAP folder where successfully persisted source messages are moved.
+  check_timeout:
+    name: IMAP timeout
+    description: Maximum IMAP operation/check timeout in seconds.
+  retention_days:
+    name: SQLite retention
+    description: Number of days of parsed DMARC report data kept in the App-local SQLite database.
+  known_sources:
+    name: Known sender infrastructure
+    description: Legitimate sending infrastructure matched by CIDR and/or reverse-DNS suffix. Used to distinguish configuration failures from spoofing.
+  log_level:
+    name: Log level
+    description: Runtime logging verbosity for the DMARC Monitor App.
