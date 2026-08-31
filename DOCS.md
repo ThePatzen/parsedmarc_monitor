@@ -198,7 +198,7 @@ Until this App is published in a public custom repository, install it as a Local
 
 ### Later: custom repository
 
-Once this project is published at a real Git repository URL, that URL can be added as a custom App repository and normal repository-based installs/updates can be used. This v0.1.0 package intentionally does not claim a repository URL that does not yet exist.
+Once this project is published at a real Git repository URL, that URL can be added as a custom App repository and normal repository-based installs/updates can be used. This v0.2.0 package intentionally does not claim a repository URL that does not yet exist.
 
 ## Troubleshooting
 

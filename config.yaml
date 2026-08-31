@@ -1,5 +1,5 @@
 name: DMARC Monitor
-version: "0.1.0"
+version: "0.2.0"
 slug: parsedmarc_monitor
 description: Parse DMARC aggregate reports and expose health metrics to Home Assistant.
 arch:
