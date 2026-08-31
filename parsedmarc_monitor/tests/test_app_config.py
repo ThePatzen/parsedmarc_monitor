@@ -56,3 +56,12 @@ def test_release_metadata_and_delivery_view_documentation_are_consistent() -> No
         "aggregierte Gruppen und keine einzelnen E-Mails",
     ):
         assert phrase in docs
+
+
+def test_docs_define_browser_local_calendar_default_range() -> None:
+    docs = " ".join((ROOT / "DOCS.md").read_text(encoding="utf-8").split())
+
+    assert (
+        "browser's local calendar date: it covers today plus the preceding six "
+        "local calendar dates, inclusive"
+    ) in docs

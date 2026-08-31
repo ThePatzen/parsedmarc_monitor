@@ -141,6 +141,11 @@ delivery details. By default, the view loads the last seven calendar dates
 (die **letzten sieben** Kalendertage), including today. The date fields **Von**
 and **Bis** are inclusive, so a row whose report date equals either boundary is
 included.
+The initial range is computed from the browser's local calendar date: it covers
+today plus the preceding six local calendar dates, inclusive. Auf Deutsch: Der
+Anfangszeitraum richtet sich nach dem lokalen Kalenderdatum des Browsers und
+umfasst heute sowie die sechs unmittelbar davorliegenden lokalen Kalendertage;
+beide Grenzen sind eingeschlossen.
 
 Use the outcome filter to show all rows, **Fehlerhaft** rows, or **Erfolgreich**
 rows. The search field matches sender IP, reverse DNS, known-source name,
