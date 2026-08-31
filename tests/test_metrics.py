@@ -126,6 +126,24 @@ def test_build_metrics_marks_an_empty_database_as_stale_with_nullable_freshness(
     assert snapshot.data_stale is True
 
 
+def test_build_metrics_marks_successful_ingestion_without_a_report_as_stale(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    db.persist_batch(
+        {"aggregate_reports": []},
+        rules(),
+        datetime(2026, 8, 31, 6, tzinfo=UTC),
+    )
+
+    snapshot = build_metrics(db, datetime(2026, 8, 31, 7, tzinfo=UTC))
+
+    assert snapshot.last_successful_ingestion == "2026-08-31T06:00:00Z"
+    assert snapshot.report_age_hours is None
+    assert snapshot.data_stale is True
+
+
 def test_build_metrics_marks_missing_successful_ingestion_as_stale_and_rounds_report_age(
     tmp_path: Path,
 ) -> None:

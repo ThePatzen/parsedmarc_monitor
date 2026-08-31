@@ -15,6 +15,7 @@ STATUS_TOPIC = "dmarc_monitor/status"
 STATE_TOPIC = "dmarc_monitor/state"
 DIAGNOSTICS_TOPIC = "dmarc_monitor/diagnostics"
 HA_STATUS_TOPIC = "homeassistant/status"
+_CONNECTION_LOSS_RETURN_CODES = frozenset({4, 7})
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,10 +353,11 @@ class MqttPublisher:
                 return True
 
             LOGGER.warning("Unable to publish MQTT topic %s (rc=%s)", topic, return_code)
-            with self._lock:
-                if self._client is client and self._connection_generation == connection_generation:
-                    self._connected = False
-                    self._connection_generation += 1
+            if return_code in _CONNECTION_LOSS_RETURN_CODES:
+                with self._lock:
+                    if self._client is client and self._connection_generation == connection_generation:
+                        self._connected = False
+                        self._connection_generation += 1
             return False
 
     def _publish_json(self, topic: str, payload: dict[str, object]) -> bool:

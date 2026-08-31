@@ -5,7 +5,7 @@ import sqlite3
 from typing import Any, Callable, Mapping, Protocol
 
 from .metrics import build_metrics, run_daily_maintenance
-from .models import Settings
+from .models import MetricsSnapshot, Settings
 
 LOGGER = logging.getLogger(__name__)
 MAX_UNSAVED_RETRIES = 2_147_483_647
@@ -18,6 +18,13 @@ IMAP_MAX_RETRIES = 4
 class StopEvent(Protocol):
     def is_set(self) -> bool: ...
     def wait(self, timeout: float) -> bool: ...
+
+
+class Publisher(Protocol):
+    def ensure_started(self) -> None: ...
+    def set_imap_ok(self, value: bool) -> None: ...
+    def set_storage_health(self, ok: bool, error: str | None = None) -> None: ...
+    def publish_snapshot(self, snapshot: MetricsSnapshot) -> None: ...
 
 
 def _sanitized_exception(exc: BaseException) -> str:
@@ -67,7 +74,7 @@ class MailboxRunner:
         self,
         settings: Settings,
         database: object,
-        publisher: object,
+        publisher: Publisher,
         stop_event: StopEvent,
         connection_factory: Callable[[Settings], object] | None = None,
         get_reports: Callable[..., object] | None = None,

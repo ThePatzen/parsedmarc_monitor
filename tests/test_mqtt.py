@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
 from dmarc_monitor.models import MetricsSnapshot, MqttSettings, ProblemSource
 from dmarc_monitor.mqtt import (
     DIAGNOSTICS_TOPIC,
@@ -106,14 +108,17 @@ def test_discovery_contains_one_device_and_all_stable_entity_ids() -> None:
     assert components["last_report"]["device_class"] == "timestamp"
     assert components["last_successful_ingestion"]["device_class"] == "timestamp"
     assert components["last_successful_ingestion"]["default_entity_id"] == "sensor.dmarc_last_successful_ingestion"
+    assert components["last_successful_ingestion"]["unique_id"] == "ha_dmarc_monitor_last_successful_ingestion"
     assert "unknown" in components["last_successful_ingestion"]["value_template"]
     assert components["report_age_hours"]["unit_of_measurement"] == "h"
     assert components["report_age_hours"]["device_class"] == "duration"
     assert components["report_age_hours"]["default_entity_id"] == "sensor.dmarc_report_age_hours"
+    assert components["report_age_hours"]["unique_id"] == "ha_dmarc_monitor_report_age_hours"
     assert "unknown" in components["report_age_hours"]["value_template"]
     assert components["data_stale"]["p"] == "binary_sensor"
     assert components["data_stale"]["device_class"] == "problem"
     assert components["data_stale"]["default_entity_id"] == "binary_sensor.dmarc_data_stale"
+    assert components["data_stale"]["unique_id"] == "ha_dmarc_monitor_data_stale"
     assert components["data_stale"]["value_template"] == "{{ 'ON' if value_json.data_stale else 'OFF' }}"
     assert components["problem"]["json_attributes_topic"] == DIAGNOSTICS_TOPIC
 
@@ -183,6 +188,22 @@ class DelayedFailureClient(FakeClient):
                 raise TimeoutError("test did not release delayed publish")
             return SimpleNamespace(rc=4)
         return SimpleNamespace(rc=0)
+
+
+class StartupFailureClient(FakeClient):
+    def __init__(self, failure_point: str) -> None:
+        super().__init__()
+        self.failure_point = failure_point
+
+    def connect_async(self, host: str, port: int, keepalive: int) -> None:
+        super().connect_async(host, port, keepalive)
+        if self.failure_point == "connect_async":
+            raise RuntimeError("connect setup failed")
+
+    def loop_start(self) -> None:
+        super().loop_start()
+        if self.failure_point == "loop_start":
+            raise RuntimeError("loop setup failed")
 
 
 class DelayedRetainedClient(FakeClient):
@@ -300,6 +321,30 @@ def test_publish_return_code_failure_disconnects_and_preserves_latest_snapshot()
     fake.on_connect(fake, None, None, 0, None)
     state_messages = [json.loads(payload) for topic, payload, _, _ in fake.publishes if topic == STATE_TOPIC]
     assert state_messages[-1]["messages_latest_period"] == 99
+
+
+def test_queue_full_rejection_allows_later_publish_without_reconnect_callback() -> None:
+    fake = FakeClient()
+    publisher = make_publisher(fake)
+    publisher.start()
+    fake.on_connect(fake, None, None, 0, None)
+    fake.publishes.clear()
+    fake.publish_rc = 15
+
+    publisher.publish_snapshot(replace(snapshot(), messages_latest_period=99))
+
+    assert publisher.is_connected is True
+    fake.publish_rc = 0
+    publisher.ensure_started()
+    publisher.publish_snapshot(replace(snapshot(), messages_latest_period=101))
+
+    state_messages = [
+        json.loads(payload)
+        for topic, payload, _, _ in fake.publishes
+        if topic == STATE_TOPIC
+    ]
+    assert state_messages[-1]["messages_latest_period"] == 101
+    assert fake.calls.count(("loop_start",)) == 1
 
 
 def test_stale_publish_failure_does_not_disconnect_reconnected_client() -> None:
@@ -432,6 +477,30 @@ def test_ensure_started_retries_after_client_factory_failure() -> None:
 
     assert attempts == 2
     assert ("loop_start",) in fake.calls
+
+
+@pytest.mark.parametrize("failure_point", ["connect_async", "loop_start"])
+def test_ensure_started_cleans_up_partial_client_and_retries(
+    failure_point: str,
+) -> None:
+    failed = StartupFailureClient(failure_point)
+    recovered = FakeClient()
+    clients = iter((failed, recovered))
+    settings = MqttSettings("core-mosquitto", 1883, "service-user", "service-pass")
+    publisher = MqttPublisher(
+        settings,
+        "0.1.0",
+        snapshot,
+        client_factory=lambda: next(clients),
+    )
+
+    publisher.ensure_started()
+    publisher.ensure_started()
+
+    assert ("loop_stop",) in failed.calls
+    assert ("disconnect",) in failed.calls
+    assert ("connect_async", "core-mosquitto", 1883, 60) in recovered.calls
+    assert ("loop_start",) in recovered.calls
 
 
 def test_health_updates_and_stop_are_non_throwing() -> None:
