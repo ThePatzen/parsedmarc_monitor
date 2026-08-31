@@ -219,7 +219,20 @@ class WebServer:
         thread = Thread(target=server.serve_forever, name="dmarc-web", daemon=True)
         self._server = server
         self._thread = thread
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            try:
+                server.server_close()
+            except Exception as cleanup_error:
+                logger.error(
+                    "web server cleanup after startup failure failed (type=%s)",
+                    type(cleanup_error).__name__,
+                )
+            finally:
+                self._server = None
+                self._thread = None
+            raise
 
     def stop(self) -> None:
         server = self._server

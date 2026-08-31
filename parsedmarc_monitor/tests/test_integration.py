@@ -134,6 +134,7 @@ class FakeWebServer:
     instances: list["FakeWebServer"] = []
     calls: list[str] = []
     raise_on_start = False
+    raise_on_stop = False
 
     def __init__(self, database: object, host: str = "0.0.0.0", port: int = 8099) -> None:
         self.database = database
@@ -152,6 +153,8 @@ class FakeWebServer:
     def stop(self) -> None:
         FakeWebServer.calls.append("web_stop")
         self.stopped = True
+        if FakeWebServer.raise_on_stop:
+            raise RuntimeError("web cleanup secret")
 
 
 class FakeRunner:
@@ -278,6 +281,51 @@ def test_main_lifecycle_cleans_up_web_and_publisher_when_web_start_fails(monkeyp
         "web_stop",
         "mqtt_stop",
     ]
+
+
+def test_main_lifecycle_continues_mqtt_cleanup_when_web_stop_fails(monkeypatch, caplog) -> None:
+    import dmarc_monitor.main as module
+
+    calls: list[str] = []
+    FakeDatabase.instances.clear()
+    FakePublisher.instances.clear()
+    FakeRunner.instances.clear()
+    FakeWebServer.instances.clear()
+    FakeWebServer.calls = calls
+    FakeWebServer.raise_on_start = False
+    FakeWebServer.raise_on_stop = True
+    settings = _settings()
+    mqtt = MqttSettings("mqtt", 1883, "user", "password")
+    rebuilt_snapshot = object()
+
+    monkeypatch.setattr(module, "load_settings", lambda path: calls.append("settings") or settings)
+    monkeypatch.setattr(module, "load_mqtt_settings", lambda env: calls.append("mqtt_settings") or mqtt)
+    monkeypatch.setattr(module, "Database", FakeDatabase)
+    monkeypatch.setattr(
+        FakeDatabase,
+        "reclassify_sources",
+        lambda database, known_sources: calls.append("reclassify") or 0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "run_daily_maintenance",
+        lambda db, retention_days: calls.append("maintenance") or True,
+    )
+    monkeypatch.setattr(module, "build_metrics", lambda db: calls.append("metrics") or rebuilt_snapshot)
+    monkeypatch.setattr(module, "MqttPublisher", FakePublisher)
+    monkeypatch.setattr(module, "WebServer", FakeWebServer)
+    monkeypatch.setattr(module, "MailboxRunner", FakeRunner)
+    monkeypatch.setattr(module.signal, "signal", lambda *args: None)
+
+    result = main([])
+
+    publisher = FakePublisher.instances[-1]
+    assert result == 0
+    assert publisher.stopped is True
+    assert calls[-2:] == ["web_stop", "mqtt_stop"]
+    assert "RuntimeError" in caplog.text
+    assert "web cleanup secret" not in caplog.text
 
 
 def test_main_returns_nonzero_for_invalid_startup_config(monkeypatch) -> None:

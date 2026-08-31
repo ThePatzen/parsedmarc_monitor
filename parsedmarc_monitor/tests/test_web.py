@@ -356,3 +356,47 @@ def test_web_server_lifecycle_is_threaded_and_idempotent_on_stop() -> None:
     finally:
         web_server.stop()
         web_server.stop()
+
+
+def test_web_server_cleans_up_when_thread_start_fails(monkeypatch) -> None:
+    class FakeServer:
+        instances: list["FakeServer"] = []
+
+        def __init__(self, address, handler) -> None:
+            del address, handler
+            self.closed = False
+            self.shutdown_called = False
+            self.instances.append(self)
+
+        def server_close(self) -> None:
+            self.closed = True
+
+        def serve_forever(self) -> None:
+            pass
+
+        def shutdown(self) -> None:
+            self.shutdown_called = True
+            raise AssertionError("shutdown must not run before serve_forever starts")
+
+    class FailingThread:
+        daemon = True
+
+        def __init__(self, target, name: str, daemon: bool) -> None:
+            del target, name, daemon
+
+        def start(self) -> None:
+            raise RuntimeError("thread start failed")
+
+    monkeypatch.setattr(web_module, "ThreadingHTTPServer", FakeServer)
+    monkeypatch.setattr(web_module, "Thread", FailingThread)
+
+    web_server = WebServer(RecordingDatabase(), host="127.0.0.1", port=0)
+    with pytest.raises(RuntimeError, match="thread start failed"):
+        web_server.start()
+
+    server = FakeServer.instances[-1]
+    assert server.closed is True
+    assert server.shutdown_called is False
+    assert web_server._server is None
+    assert web_server._thread is None
+    web_server.stop()

@@ -74,7 +74,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     finally:
         if web_server is not None:
-            web_server.stop()
+            try:
+                web_server.stop()
+            except Exception as cleanup_error:
+                LOGGER.error(
+                    "DMARC web server cleanup failed (type=%s)",
+                    type(cleanup_error).__name__,
+                )
         if publisher is not None:
             publisher.stop()
 
