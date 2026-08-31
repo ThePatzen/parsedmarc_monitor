@@ -195,11 +195,13 @@ class MqttPublisher:
         self.client_factory = client_factory
         self._client: object | None = None
         self._connected = False
+        self._connection_generation = 0
         self._started = False
         self._startup_token: object | None = None
         self._latest_snapshot: MetricsSnapshot | None = None
         self._health = RuntimeHealth()
         self._lock = threading.RLock()
+        self._publish_lock = threading.RLock()
 
     @property
     def is_connected(self) -> bool:
@@ -229,6 +231,8 @@ class MqttPublisher:
                     cancelled = True
                 else:
                     self._client = client
+                    self._connected = False
+                    self._connection_generation += 1
                     cancelled = False
             if cancelled:
                 self._cleanup_client(client)
@@ -251,6 +255,7 @@ class MqttPublisher:
                     self._startup_token = None
                     self._started = False
                     self._connected = False
+                    self._connection_generation += 1
                     if self._client is client:
                         self._client = None
             if client is not None:
@@ -274,6 +279,7 @@ class MqttPublisher:
             client = self._client
             self._client = None
             self._connected = False
+            self._connection_generation += 1
             self._started = False
             self._startup_token = None
         if client is None:
@@ -325,46 +331,55 @@ class MqttPublisher:
             return self._latest_snapshot
 
     def _safe_publish(self, topic: str, payload: str, *, retain: bool = True) -> bool:
-        with self._lock:
-            client = self._client
-            if client is None or not self._connected:
-                return False
-        try:
-            result = client.publish(topic, payload, qos=1, retain=retain)
-        except Exception:
-            LOGGER.exception("Unable to publish MQTT topic %s", topic)
+        with self._publish_lock:
             with self._lock:
-                if self._client is client:
+                client = self._client
+                if client is None or not self._connected:
+                    return False
+                connection_generation = self._connection_generation
+            try:
+                result = client.publish(topic, payload, qos=1, retain=retain)
+            except Exception:
+                LOGGER.exception("Unable to publish MQTT topic %s", topic)
+                with self._lock:
+                    if self._client is client and self._connection_generation == connection_generation:
+                        self._connected = False
+                        self._connection_generation += 1
+                return False
+
+            return_code = getattr(result, "rc", None)
+            if return_code == 0:
+                return True
+
+            LOGGER.warning("Unable to publish MQTT topic %s (rc=%s)", topic, return_code)
+            with self._lock:
+                if self._client is client and self._connection_generation == connection_generation:
                     self._connected = False
+                    self._connection_generation += 1
             return False
-
-        return_code = getattr(result, "rc", None)
-        if return_code == 0:
-            return True
-
-        LOGGER.warning("Unable to publish MQTT topic %s (rc=%s)", topic, return_code)
-        with self._lock:
-            if self._client is client:
-                self._connected = False
-        return False
 
     def _publish_json(self, topic: str, payload: dict[str, object]) -> bool:
         return self._safe_publish(topic, json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
     def _publish_snapshot_payloads(self, snapshot: MetricsSnapshot) -> None:
-        self._publish_json(STATE_TOPIC, build_state_payload(snapshot))
-        with self._lock:
-            health = self._health
-        self._publish_json(DIAGNOSTICS_TOPIC, build_diagnostics_payload(snapshot, health))
+        with self._publish_lock:
+            current_snapshot = self._snapshot()
+            if current_snapshot is None:
+                return
+            self._publish_json(STATE_TOPIC, build_state_payload(current_snapshot))
+            with self._lock:
+                health = self._health
+            self._publish_json(DIAGNOSTICS_TOPIC, build_diagnostics_payload(current_snapshot, health))
 
     def _publish_health_if_connected(self) -> None:
-        with self._lock:
-            if not self._connected:
-                return
-            health = self._health
-        snapshot = self._snapshot()
-        if snapshot is not None:
-            self._publish_json(DIAGNOSTICS_TOPIC, build_diagnostics_payload(snapshot, health))
+        with self._publish_lock:
+            with self._lock:
+                if not self._connected:
+                    return
+                health = self._health
+            snapshot = self._snapshot()
+            if snapshot is not None:
+                self._publish_json(DIAGNOSTICS_TOPIC, build_diagnostics_payload(snapshot, health))
 
     def _republish_all(self) -> None:
         try:
@@ -376,16 +391,15 @@ class MqttPublisher:
             LOGGER.exception("Unable to republish MQTT discovery/state")
 
     def _on_connect(self, client: object, userdata: object, flags: object, reason_code: object, properties: object) -> None:
-        if getattr(reason_code, "is_failure", False) or (isinstance(reason_code, int) and reason_code != 0):
-            with self._lock:
-                if self._client is client:
-                    self._connected = False
-            LOGGER.warning("MQTT connection rejected: %s", reason_code)
-            return
+        rejected = getattr(reason_code, "is_failure", False) or (isinstance(reason_code, int) and reason_code != 0)
         with self._lock:
             if self._client is not client:
                 return
-            self._connected = True
+            self._connection_generation += 1
+            self._connected = not rejected
+        if rejected:
+            LOGGER.warning("MQTT connection rejected: %s", reason_code)
+            return
         try:
             client.subscribe(HA_STATUS_TOPIC, qos=1)
         except Exception:
@@ -397,6 +411,7 @@ class MqttPublisher:
         with self._lock:
             if self._client is client:
                 self._connected = False
+                self._connection_generation += 1
 
     def _on_message(self, client: object, userdata: object, message: object) -> None:
         try:

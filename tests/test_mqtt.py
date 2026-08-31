@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+from collections.abc import Callable
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -152,9 +154,71 @@ class FakeClient:
         return SimpleNamespace(rc=self.publish_rc)
 
 
+class DelayedFailureClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.publish_entered = threading.Event()
+        self.release_publish = threading.Event()
+        self.reconnect_subscribed = threading.Event()
+        self._armed = False
+        self._delayed = False
+
+    def arm_failure(self) -> None:
+        self._armed = True
+
+    def subscribe(self, topic: str, qos: int = 0) -> None:
+        super().subscribe(topic, qos)
+        if self._delayed:
+            self.reconnect_subscribed.set()
+
+    def publish(self, topic: str, payload: str, qos: int = 0, retain: bool = False) -> object:
+        self.publishes.append((topic, payload, qos, retain))
+        if self._armed and not self._delayed:
+            self._delayed = True
+            self.publish_entered.set()
+            if not self.release_publish.wait(timeout=5):
+                raise TimeoutError("test did not release delayed publish")
+            return SimpleNamespace(rc=4)
+        return SimpleNamespace(rc=0)
+
+
+class DelayedRetainedClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.retained: dict[str, str] = {}
+        self.publish_entered = threading.Event()
+        self.release_publish = threading.Event()
+        self._delayed_topic: str | None = None
+        self._delayed = False
+
+    def delay_next(self, topic: str) -> None:
+        self._delayed_topic = topic
+
+    def publish(self, topic: str, payload: str, qos: int = 0, retain: bool = False) -> object:
+        if topic == self._delayed_topic and not self._delayed:
+            self._delayed = True
+            self.publish_entered.set()
+            if not self.release_publish.wait(timeout=5):
+                raise TimeoutError("test did not release delayed retained publish")
+        self.publishes.append((topic, payload, qos, retain))
+        if retain:
+            self.retained[topic] = payload
+        return SimpleNamespace(rc=0)
+
+
 def make_publisher(fake: FakeClient, initial: MetricsSnapshot | None = None) -> MqttPublisher:
     settings = MqttSettings("core-mosquitto", 1883, "service-user", "service-pass")
     return MqttPublisher(settings, "0.1.0", lambda: initial or snapshot(), client_factory=lambda *a, **k: fake)
+
+
+def recording_thread(target: Callable[[], None], errors: list[BaseException]) -> threading.Thread:
+    def run() -> None:
+        try:
+            target()
+        except BaseException as exc:
+            errors.append(exc)
+
+    return threading.Thread(target=run)
 
 
 def test_start_sets_lwt_reconnect_credentials_and_async_connect() -> None:
@@ -233,6 +297,117 @@ def test_publish_return_code_failure_disconnects_and_preserves_latest_snapshot()
     fake.on_connect(fake, None, None, 0, None)
     state_messages = [json.loads(payload) for topic, payload, _, _ in fake.publishes if topic == STATE_TOPIC]
     assert state_messages[-1]["messages_latest_period"] == 99
+
+
+def test_stale_publish_failure_does_not_disconnect_reconnected_client() -> None:
+    fake = DelayedFailureClient()
+    publisher = make_publisher(fake)
+    publisher.start()
+    fake.on_connect(fake, None, None, 0, None)
+    fake.arm_failure()
+    errors: list[BaseException] = []
+
+    publish_thread = recording_thread(
+        lambda: publisher.publish_snapshot(replace(snapshot(), messages_latest_period=99)), errors
+    )
+    reconnect_thread = recording_thread(lambda: fake.on_connect(fake, None, None, 0, None), errors)
+    publish_thread.start()
+    assert fake.publish_entered.wait(timeout=5)
+    reconnect_thread.start()
+    assert fake.reconnect_subscribed.wait(timeout=5)
+
+    fake.release_publish.set()
+    publish_thread.join(timeout=5)
+    reconnect_thread.join(timeout=5)
+
+    assert not publish_thread.is_alive()
+    assert not reconnect_thread.is_alive()
+    assert errors == []
+    assert publisher.is_connected is True
+
+
+def test_newer_snapshot_remains_last_retained_when_birth_publish_finishes_late() -> None:
+    fake = DelayedRetainedClient()
+    publisher = make_publisher(fake)
+    publisher.start()
+    fake.on_connect(fake, None, None, 0, None)
+    fake.delay_next(STATE_TOPIC)
+    newer = replace(snapshot(), messages_latest_period=99)
+    newer_cached = threading.Event()
+    errors: list[BaseException] = []
+    publish_snapshot_payloads = publisher._publish_snapshot_payloads
+
+    def signal_newer_cache(snapshot_value: MetricsSnapshot) -> None:
+        if snapshot_value is newer:
+            newer_cached.set()
+        publish_snapshot_payloads(snapshot_value)
+
+    publisher._publish_snapshot_payloads = signal_newer_cache
+
+    birth_thread = recording_thread(
+        lambda: fake.on_message(
+            fake,
+            None,
+            SimpleNamespace(topic="homeassistant/status", payload=b"online"),
+        ),
+        errors,
+    )
+    newer_thread = recording_thread(lambda: publisher.publish_snapshot(newer), errors)
+    birth_thread.start()
+    assert fake.publish_entered.wait(timeout=5)
+    newer_thread.start()
+    assert newer_cached.wait(timeout=5)
+
+    fake.release_publish.set()
+    birth_thread.join(timeout=5)
+    newer_thread.join(timeout=5)
+
+    assert not birth_thread.is_alive()
+    assert not newer_thread.is_alive()
+    assert errors == []
+    assert json.loads(fake.retained[STATE_TOPIC])["messages_latest_period"] == 99
+
+
+def test_newer_health_remains_last_retained_when_birth_publish_finishes_late() -> None:
+    fake = DelayedRetainedClient()
+    publisher = make_publisher(fake)
+    publisher.start()
+    fake.on_connect(fake, None, None, 0, None)
+    fake.delay_next(DIAGNOSTICS_TOPIC)
+    newer_health_cached = threading.Event()
+    errors: list[BaseException] = []
+    publish_health_if_connected = publisher._publish_health_if_connected
+
+    def signal_newer_health_cache() -> None:
+        newer_health_cached.set()
+        publish_health_if_connected()
+
+    publisher._publish_health_if_connected = signal_newer_health_cache
+
+    birth_thread = recording_thread(
+        lambda: fake.on_message(
+            fake,
+            None,
+            SimpleNamespace(topic="homeassistant/status", payload=b"online"),
+        ),
+        errors,
+    )
+    health_thread = recording_thread(lambda: publisher.set_storage_health(False, "new failure"), errors)
+    birth_thread.start()
+    assert fake.publish_entered.wait(timeout=5)
+    health_thread.start()
+    assert newer_health_cached.wait(timeout=5)
+
+    fake.release_publish.set()
+    birth_thread.join(timeout=5)
+    health_thread.join(timeout=5)
+
+    assert not birth_thread.is_alive()
+    assert not health_thread.is_alive()
+    assert errors == []
+    diagnostics = json.loads(fake.retained[DIAGNOSTICS_TOPIC])
+    assert diagnostics["storage_ok"] is False
+    assert diagnostics["last_storage_error"] == "new failure"
 
 
 def test_ensure_started_retries_after_client_factory_failure() -> None:
