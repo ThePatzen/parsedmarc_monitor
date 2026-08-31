@@ -165,17 +165,35 @@ class Database:
         return int(parsed.timestamp())
 
     @staticmethod
+    def _required_mapping(value: Any, field_name: str) -> Mapping[str, Any]:
+        if not isinstance(value, Mapping):
+            raise ValueError(f"{field_name} must be a mapping")
+        return value
+
+    @staticmethod
+    def _required_string(mapping: Mapping[str, Any], field_name: str) -> str:
+        value = mapping.get(field_name)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{field_name} must be a non-empty string")
+        return value
+
+    def _validated_report_identity(
+        self, report: Mapping[str, Any]
+    ) -> tuple[Mapping[str, Any], Mapping[str, Any], str, str, str, int, int]:
+        metadata = self._required_mapping(report.get("report_metadata"), "report_metadata")
+        policy = self._required_mapping(report.get("policy_published"), "policy_published")
+        org_name = self._required_string(metadata, "org_name")
+        report_id = self._required_string(metadata, "report_id")
+        policy_domain = self._required_string(policy, "domain")
+        begin_ts = self._timestamp(metadata.get("begin_date"))
+        end_ts = self._timestamp(metadata.get("end_date"))
+        if end_ts < begin_ts:
+            raise ValueError("report end timestamp cannot be before begin timestamp")
+        return metadata, policy, org_name, report_id, policy_domain, begin_ts, end_ts
+
+    @staticmethod
     def _report_fingerprint(report: Mapping[str, Any]) -> str:
-        metadata = report.get("report_metadata") or {}
-        policy = report.get("policy_published") or {}
-        identity = [
-            metadata.get("org_name"),
-            metadata.get("report_id"),
-            policy.get("domain"),
-            metadata.get("begin_date"),
-            metadata.get("end_date"),
-        ]
-        canonical = json.dumps(identity, ensure_ascii=False, separators=(",", ":"))
+        canonical = json.dumps(report, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def persist_batch(
@@ -197,13 +215,9 @@ class Database:
             for report in batch.get("aggregate_reports", []) or []:
                 if not isinstance(report, Mapping):
                     raise ValueError("aggregate report must be a mapping")
-                metadata = report.get("report_metadata") or {}
-                policy = report.get("policy_published") or {}
-                org_name = str(metadata.get("org_name") or "")
-                report_id = str(metadata.get("report_id") or "")
-                policy_domain = str(policy.get("domain") or "")
-                begin_ts = self._timestamp(metadata.get("begin_date"))
-                end_ts = self._timestamp(metadata.get("end_date"))
+                (
+                    metadata, policy, org_name, report_id, policy_domain, begin_ts, end_ts
+                ) = self._validated_report_identity(report)
                 fingerprint = self._report_fingerprint(report)
                 cursor = connection.execute(
                     """
@@ -292,6 +306,37 @@ class Database:
             connection.close()
 
         return PersistResult(reports_inserted=reports_inserted, rows_inserted=rows_inserted)
+
+    def reclassify_sources(self, rules: Sequence[KnownSourceRule]) -> int:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN")
+            rows = connection.execute(
+                "SELECT id, source_ip, source_reverse_dns, known_source, known_source_name "
+                "FROM aggregate_rows"
+            ).fetchall()
+            changed = 0
+            for row in rows:
+                known_source_name = match_known_source(
+                    str(row["source_ip"]), row["source_reverse_dns"], rules
+                )
+                known_source = int(known_source_name is not None)
+                if (
+                    known_source != int(row["known_source"])
+                    or known_source_name != row["known_source_name"]
+                ):
+                    connection.execute(
+                        "UPDATE aggregate_rows SET known_source = ?, known_source_name = ? WHERE id = ?",
+                        (known_source, known_source_name, row["id"]),
+                    )
+                    changed += 1
+            connection.commit()
+            return changed
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     @staticmethod
     def _summary(row: sqlite3.Row | None) -> CountSummary:

@@ -110,6 +110,60 @@ def test_persist_batch_is_idempotent(tmp_path: Path) -> None:
     assert counts.unknown_fail == 3
 
 
+@pytest.mark.parametrize(
+    ("case", "mutate"),
+    [
+        ("missing metadata", lambda report: report.pop("report_metadata")),
+        ("non-mapping metadata", lambda report: report.__setitem__("report_metadata", "invalid")),
+        ("missing policy", lambda report: report.pop("policy_published")),
+        ("non-mapping policy", lambda report: report.__setitem__("policy_published", "invalid")),
+        ("empty organization", lambda report: report["report_metadata"].__setitem__("org_name", "")),
+        ("empty report id", lambda report: report["report_metadata"].__setitem__("report_id", "")),
+        ("empty policy domain", lambda report: report["policy_published"].__setitem__("domain", "")),
+        ("invalid begin", lambda report: report["report_metadata"].__setitem__("begin_date", "invalid")),
+        ("invalid end", lambda report: report["report_metadata"].__setitem__("end_date", "invalid")),
+        (
+            "end before begin",
+            lambda report: report["report_metadata"].update(
+                {"begin_date": "2026-08-30 00:00:00", "end_date": "2026-08-29 00:00:00"}
+            ),
+        ),
+    ],
+)
+def test_persist_batch_rejects_invalid_report_identity_without_partial_insert(
+    tmp_path: Path, case: str, mutate
+) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    valid_report = load_fixture()
+    invalid_report = deepcopy(valid_report)
+    invalid_report["report_metadata"]["report_id"] = f"invalid-{case}"
+    mutate(invalid_report)
+
+    with pytest.raises(ValueError):
+        db.persist_batch({"aggregate_reports": [valid_report, invalid_report]}, rules())
+
+    with sqlite3.connect(db.path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM reports").fetchone()[0] == 0
+
+
+def test_persist_batch_uses_complete_report_content_for_identity(tmp_path: Path) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    original = load_fixture()
+    changed_records = deepcopy(original)
+    changed_records["records"][0]["count"] = 11
+    batch = {"aggregate_reports": [original, changed_records]}
+
+    first = db.persist_batch(batch, rules())
+    redelivery = db.persist_batch(batch, rules())
+
+    assert first.reports_inserted == 2
+    assert first.rows_inserted == 4
+    assert redelivery.reports_inserted == 0
+    assert redelivery.rows_inserted == 0
+
+
 def test_persist_uses_parsedmarc_dmarc_alignment_directly(tmp_path: Path) -> None:
     db = Database(tmp_path / "dmarc.sqlite3")
     db.initialize()
@@ -165,3 +219,26 @@ def test_meta_round_trip_and_optimize(tmp_path: Path) -> None:
     db.set_meta("example", "value")
     assert db.get_meta("example") == "value"
     db.optimize()
+
+
+def test_reclassify_sources_updates_stored_classifications_idempotently(tmp_path: Path) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    db.persist_batch({"aggregate_reports": [load_fixture()]}, ())
+
+    assert db.counts_for_report_date("2026-08-29").unknown_pass == 10
+
+    changed = db.reclassify_sources(rules())
+
+    assert changed == 1
+    assert db.counts_for_report_date("2026-08-29").unknown_pass == 0
+    with sqlite3.connect(db.path) as connection:
+        known_pass = connection.execute(
+            "SELECT message_count FROM aggregate_rows WHERE known_source = 1 AND dmarc_pass = 1"
+        ).fetchone()
+        known_name = connection.execute(
+            "SELECT known_source_name FROM aggregate_rows WHERE known_source = 1 AND dmarc_pass = 1"
+        ).fetchone()
+    assert known_pass[0] == 10
+    assert known_name[0] == "Primary"
+    assert db.reclassify_sources(rules()) == 0

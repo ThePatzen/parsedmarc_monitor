@@ -159,6 +159,12 @@ def test_main_constructs_lifecycle_in_order_and_stops_publisher(monkeypatch) -> 
     monkeypatch.setattr(module, "load_mqtt_settings", lambda env: calls.append("mqtt_settings") or mqtt)
     monkeypatch.setattr(module, "Database", FakeDatabase)
     monkeypatch.setattr(
+        FakeDatabase,
+        "reclassify_sources",
+        lambda database, known_sources: calls.append("reclassify") or 0,
+        raising=False,
+    )
+    monkeypatch.setattr(
         module,
         "run_daily_maintenance",
         lambda db, retention_days: calls.append("maintenance") or True,
@@ -179,7 +185,7 @@ def test_main_constructs_lifecycle_in_order_and_stops_publisher(monkeypatch) -> 
     assert publisher.snapshots == [rebuilt_snapshot]
     assert runner.ran is True
     assert publisher.stopped is True
-    assert calls[:4] == ["settings", "mqtt_settings", "maintenance", "metrics"]
+    assert calls[:5] == ["settings", "mqtt_settings", "reclassify", "maintenance", "metrics"]
 
 
 def test_main_returns_nonzero_for_invalid_startup_config(monkeypatch) -> None:

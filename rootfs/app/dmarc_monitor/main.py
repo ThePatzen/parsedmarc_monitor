@@ -42,6 +42,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         database.initialize()
+        database.reclassify_sources(settings.known_sources)
         run_daily_maintenance(database, settings.retention_days)
 
         publisher = MqttPublisher(
