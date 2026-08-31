@@ -26,8 +26,38 @@ def test_query_deliveries_returns_paginated_delivery_details(tmp_path: Path) -> 
     assert len(result.items) == 2
     assert result.items[0].dmarc_pass is False
     assert result.items[0].reporting_org == "receiver.example"
-    assert result.items[0].report_id == "fixture-report-1"
-    assert result.items[0].header_from == "example.org"
+    assert result.items[0].report_id == "report-2026-08-29"
+    assert result.items[0].header_from == "example.at"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"outcome": "other"}, "outcome"),
+        ({"page": 0}, "page"),
+        ({"page_size": 101}, "page size"),
+    ],
+)
+def test_query_deliveries_validates_pagination_and_outcome(tmp_path: Path, kwargs, message: str) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    with pytest.raises(ValueError, match=message):
+        db.query_deliveries("2026-08-29", "2026-08-29", **kwargs)
+
+
+def test_query_deliveries_supports_failed_pagination_and_literal_search(tmp_path: Path) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    db.persist_batch({"aggregate_reports": [load_fixture()]}, rules())
+
+    page = db.query_deliveries(
+        "2026-08-29", "2026-08-29", outcome="failed", search="EXAMPLE.AT", page=2, page_size=1
+    )
+
+    assert page.total == 1
+    assert page.page == 2
+    assert page.items == ()
+    assert db.query_deliveries("2026-08-29", "2026-08-29", search="%", page_size=100).total == 0
 
 
 def load_fixture() -> dict:
