@@ -212,6 +212,67 @@ SECURITY_HEADERS = {
 }
 
 
+STATIC_ROOT = Path(__file__).parents[1] / "rootfs" / "app" / "dmarc_monitor" / "static"
+
+
+def test_http_serves_frontend_assets_with_expected_content_types_and_cache_policy() -> None:
+    for server in running_server(RecordingDatabase(), STATIC_ROOT):
+        expected = {
+            "/": "text/html; charset=utf-8",
+            "/app.css": "text/css; charset=utf-8",
+            "/app.js": "text/javascript; charset=utf-8",
+        }
+        for path, content_type in expected.items():
+            response = request(server, path)
+            assert response.status == 200
+            assert response.headers["Content-Type"] == content_type
+            assert response.read()
+            if path == "/":
+                assert response.headers["Cache-Control"] == "no-store"
+            else:
+                assert response.headers["Cache-Control"] == "public, max-age=3600"
+
+
+def test_frontend_contract_uses_semantic_controls_and_relative_resources() -> None:
+    html = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
+    for marker in (
+        'id="date-from"',
+        'id="date-to"',
+        'id="outcome"',
+        'id="search"',
+        'id="apply-filters"',
+        '<table',
+        'id="pagination"',
+        'id="loading"',
+        'id="empty"',
+        'id="error"',
+        'href="./app.css"',
+        'src="./app.js"',
+    ):
+        assert marker in html
+    assert "<details" in html
+    assert "https://" not in html
+
+
+def test_frontend_contract_renders_api_values_as_safe_text() -> None:
+    javascript = (STATIC_ROOT / "app.js").read_text(encoding="utf-8")
+    assert "textContent" in javascript
+    assert "createTextNode" in javascript
+    assert "./api/deliveries" in javascript
+    assert "innerHTML" not in javascript
+    assert "insertAdjacentHTML" not in javascript
+    assert "http://" not in javascript
+    assert "https://" not in javascript
+
+
+def test_frontend_contract_has_mobile_failure_and_focus_styles() -> None:
+    css = (STATIC_ROOT / "app.css").read_text(encoding="utf-8")
+    assert "@media (max-width: 700px)" in css
+    assert ".delivery-row.failed" in css
+    assert ":focus-visible" in css
+    assert "details" in css
+
+
 def test_http_deliveries_returns_utf8_json_and_security_headers() -> None:
     database = RecordingDatabase()
     for server in running_server(database, Path(__file__).parent):

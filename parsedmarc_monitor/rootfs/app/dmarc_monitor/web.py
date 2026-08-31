@@ -109,6 +109,11 @@ def create_handler(
     allowed_clients: frozenset[str] = frozenset({"172.30.32.2"}),
 ) -> type[BaseHTTPRequestHandler]:
     root = Path(static_root)
+    static_assets = {
+        "/": (root / "index.html", "text/html; charset=utf-8"),
+        "/app.css": (root / "app.css", "text/css; charset=utf-8"),
+        "/app.js": (root / "app.js", "text/javascript; charset=utf-8"),
+    }
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "dmarc-monitor"
@@ -138,9 +143,7 @@ def create_handler(
             self._send_json(status, {"error": message})
 
         def _send_static(self, path: str) -> None:
-            filenames = {"/": ("index.html", "text/html; charset=utf-8"), "/app.css": ("app.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8")}
-            filename, content_type = filenames[path]
-            asset = root / filename
+            asset, content_type = static_assets[path]
             if not asset.is_file():
                 self._send_error_json(404, "not found")
                 return
@@ -149,6 +152,8 @@ def create_handler(
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             for name, value in _SECURITY_HEADERS.items():
+                if name == "Cache-Control":
+                    value = "no-store" if path == "/" else "public, max-age=3600"
                 self.send_header(name, value)
             self.end_headers()
             self.wfile.write(body)

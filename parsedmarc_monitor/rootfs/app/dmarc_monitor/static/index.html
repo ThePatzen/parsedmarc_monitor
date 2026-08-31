@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DMARC-Zustellungen</title>
+    <link rel="stylesheet" href="./app.css">
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="page-header">
+        <p class="eyebrow">DMARC Monitor</p>
+        <h1>DMARC-Zustellungen</h1>
+        <p class="intro">Aggregierte Zustellgruppen prüfen und Fehler nachvollziehen.</p>
+      </header>
+
+      <section class="card filter-card" aria-labelledby="filters-heading">
+        <h2 id="filters-heading">Filter</h2>
+        <form id="filters-form">
+          <div class="filter-grid">
+            <label for="date-from">Von</label>
+            <label for="date-to">Bis</label>
+            <label for="outcome">Ergebnis</label>
+            <label for="search">Suche</label>
+            <input id="date-from" name="date-from" type="date" required>
+            <input id="date-to" name="date-to" type="date" required>
+            <select id="outcome" name="outcome">
+              <option value="all">Alle</option>
+              <option value="failed">Fehlerhaft</option>
+              <option value="passed">Erfolgreich</option>
+            </select>
+            <input id="search" name="search" type="search" autocomplete="off" placeholder="IP, Domain oder Quelle">
+          </div>
+          <button id="apply-filters" class="primary-action" type="submit">Filter anwenden</button>
+        </form>
+        <p id="validation-error" class="state state-error" role="alert" hidden></p>
+      </section>
+
+      <section class="card results-card" aria-labelledby="results-heading">
+        <div class="results-heading">
+          <h2 id="results-heading">Zustellgruppen</h2>
+          <p id="loading" class="state state-loading" role="status" aria-live="polite" hidden>Lade Zustellungen …</p>
+        </div>
+        <p id="error" class="state state-error" role="alert" hidden></p>
+        <p id="empty" class="state state-empty" role="status" hidden>Keine Zustellgruppen für diese Filter.</p>
+        <details id="details-template" hidden aria-hidden="true">
+          <summary>Diagnose anzeigen</summary>
+        </details>
+        <div class="table-scroll">
+          <table id="delivery-table">
+            <caption class="visually-hidden">DMARC-Zustellgruppen</caption>
+            <thead>
+              <tr>
+                <th scope="col">Zeitraum</th>
+                <th scope="col">Header-From</th>
+                <th scope="col">Quelle</th>
+                <th scope="col">Bekannte Quelle</th>
+                <th scope="col">Nachrichten</th>
+                <th scope="col">Ergebnisse</th>
+              </tr>
+            </thead>
+            <tbody id="deliveries-body"></tbody>
+          </table>
+        </div>
+        <nav id="pagination" class="pagination" aria-label="Seitennavigation"></nav>
+      </section>
+    </main>
+  </body>
+</html>
