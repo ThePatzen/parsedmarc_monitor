@@ -1,0 +1,26 @@
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+preview = true
+exclude = [
+    ".git",
+    ".idea",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    "*.db",
+    "*.sqlite",
+    "*.sqlite3",
+    ".coverage",
+    "*:Zone.Identifier",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["F401", "I001"]
+
+[tool.pytest.ini_options]
+pythonpath = ["rootfs/app"]

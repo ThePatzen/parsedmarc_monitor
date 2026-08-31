@@ -1,0 +1,17 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build test image
+        run: docker build --target test -t parsedmarc-monitor-test:ci .
+      - name: Run tests
+        run: docker run --rm parsedmarc-monitor-test:ci
+      - name: Run Ruff
+        run: docker run --rm --entrypoint /opt/venv/bin/ruff parsedmarc-monitor-test:ci check /app /tests
