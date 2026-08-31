@@ -183,7 +183,7 @@ dmarc_monitor/state
 dmarc_monitor/diagnostics
 ```
 
-Discovery, state, diagnostics, and availability are retained with QoS 1. If MQTT goes offline or a publish fails, the most recent SQLite-derived snapshot remains cached for recovery; the App marks the publisher disconnected, retries publisher startup during mailbox retry cycles, and republishes after reconnect and after the Home Assistant MQTT `online` birth message. MQTT errors never reject a batch that SQLite has committed.
+Discovery, state, diagnostics, and availability are retained with QoS 1. A synchronous MQTT client construction or startup failure is retried by `ensure_started()` during mailbox retry cycles. After an established client goes offline or a publish fails, the most recent SQLite-derived snapshot remains cached; Paho reconnect and its `on_connect` callback republish it, as does the Home Assistant MQTT `online` birth message. MQTT errors never reject a batch that SQLite has committed.
 
 ## Local installation on Home Assistant OS
 
