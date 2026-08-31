@@ -134,6 +134,29 @@ MQTT Discovery creates one **DMARC Monitor** device with these sixteen entities:
 
 The problem binary sensor exposes bounded diagnostic attributes including up to five problem sources plus `imap_ok`, `storage_ok`, and the last bounded storage error.
 
+## Delivery detail Web UI
+
+Open the App's **Web UI** button in Home Assistant to inspect the stored
+delivery details. By default, the view loads the last seven calendar dates
+(die **letzten sieben** Kalendertage), including today. The date fields **Von**
+and **Bis** are inclusive, so a row whose report date equals either boundary is
+included.
+
+Use the outcome filter to show all rows, **Fehlerhaft** rows, or **Erfolgreich**
+rows. The search field matches sender IP, reverse DNS, known-source name,
+Header-From, and Envelope-From.
+Failed groups are ordered first, then successful groups, with the newest report
+date and largest message count used as tie-breakers. Each row shows its
+`Nachrichtenanzahl` and can be expanded to inspect report organization,
+report ID, policy domain, Header-From, Envelope-From, source details,
+authentication results, and source classification. Pagination keeps larger
+result sets manageable; use the previous/next controls to move through the
+matching rows.
+
+Rows are **aggregierte Gruppen und keine einzelnen E-Mails**: one row is a
+summary for a source and reporting interval, and its message count represents
+the number of messages in that aggregate group.
+
 ## Existing reports on first start
 
 At startup the App first scans the configured `reports_folder` before entering continuous watch mode. Existing DMARC reports in `INBOX` are therefore imported on the first successful connection.
@@ -198,7 +221,7 @@ Until this App is published in a public custom repository, install it as a Local
 
 ### Later: custom repository
 
-Once this project is published at a real Git repository URL, that URL can be added as a custom App repository and normal repository-based installs/updates can be used. This v0.2.0 package intentionally does not claim a repository URL that does not yet exist.
+Once this project is published at a real Git repository URL, that URL can be added as a custom App repository and normal repository-based installs/updates can be used. This v0.3.0 package intentionally does not claim a repository URL that does not yet exist.
 
 ## Troubleshooting
 

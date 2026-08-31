@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import runpy
 
 import yaml
 
@@ -32,3 +33,26 @@ def test_web_view_does_not_require_a_web_framework() -> None:
     framework_names = ("aiohttp", "django", "fastapi", "flask", "starlette")
 
     assert not any(name in requirements for name in framework_names)
+
+
+def test_release_metadata_and_delivery_view_documentation_are_consistent() -> None:
+    config = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
+    version = runpy.run_path(
+        APP_ROOT / "dmarc_monitor/__init__.py",
+        run_name="dmarc_monitor_release_metadata",
+    )["__version__"]
+    docs = (ROOT / "DOCS.md").read_text(encoding="utf-8")
+
+    assert config["version"] == "0.3.0"
+    assert version == "0.3.0"
+    for phrase in (
+        "Web UI",
+        "letzten sieben",
+        "Von",
+        "Bis",
+        "Fehlerhaft",
+        "Erfolgreich",
+        "Nachrichtenanzahl",
+        "aggregierte Gruppen und keine einzelnen E-Mails",
+    ):
+        assert phrase in docs

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- Added an ingress-served Home Assistant Web UI for delivery detail groups.
+- Added inclusive date-range, outcome, and sender search filters with
+  failure-first ordering and pagination.
+- Added expandable report, source, authentication, classification, and
+  message-count details; rows represent aggregate groups rather than
+  individual emails.
+
 ## 0.2.0
 
 - Added Home Assistant data-freshness and stale-data entities.

@@ -15,3 +15,8 @@ Parsed report metadata is retained locally in `/data/dmarc.sqlite3`; the default
 At startup, the App validates stored schema versions, reclassifies retained rows against the current `known_sources` rules, and exposes data freshness through Home Assistant. A report is considered stale when no successful ingestion or report end time is available, or when its newest reporting interval ended more than 48 hours ago.
 
 See the **Documentation** tab for the full option and entity reference.
+
+The App also includes a Home Assistant **Web UI** for reviewing aggregate
+delivery groups. Filter the inclusive date range, outcome, and sender search;
+failed groups are shown first and each row can be expanded for its report and
+authentication details.
