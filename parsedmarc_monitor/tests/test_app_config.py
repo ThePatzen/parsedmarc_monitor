@@ -5,7 +5,8 @@ from pathlib import Path
 import yaml
 
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path("/addon") if Path("/addon/config.yaml").is_file() else Path(__file__).parents[1]
+APP_ROOT = Path("/app") if Path("/app/dmarc_monitor/static/index.html").is_file() else ROOT / "rootfs/app"
 
 
 def test_addon_declares_home_assistant_ingress_panel() -> None:
@@ -22,7 +23,8 @@ def test_docker_image_copies_application_tree_with_static_assets() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert "COPY rootfs/app /app" in dockerfile
-    assert (ROOT / "rootfs/app/dmarc_monitor/static/index.html").is_file()
+    assert "COPY config.yaml Dockerfile requirements.txt /addon/" in dockerfile
+    assert (APP_ROOT / "dmarc_monitor/static/index.html").is_file()
 
 
 def test_web_view_does_not_require_a_web_framework() -> None:
