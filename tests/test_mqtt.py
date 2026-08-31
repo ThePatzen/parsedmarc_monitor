@@ -31,7 +31,10 @@ EXPECTED_ENTITY_IDS = {
     "sensor.dmarc_unknown_fail_30d",
     "sensor.dmarc_last_report",
     "sensor.dmarc_last_reporting_org",
+    "sensor.dmarc_last_successful_ingestion",
+    "sensor.dmarc_report_age_hours",
     "binary_sensor.dmarc_problem",
+    "binary_sensor.dmarc_data_stale",
 }
 
 
@@ -49,6 +52,9 @@ def snapshot(problem: bool = True, messages: int = 13) -> MetricsSnapshot:
         unknown_fail_30d=5,
         last_report="2026-08-31T01:00:00Z",
         last_reporting_org="receiver.example",
+        last_successful_ingestion="2026-08-31T01:15:00Z",
+        report_age_hours=7.5,
+        data_stale=False,
         problem=problem,
         problem_sources=(
             ProblemSource("203.0.113.10", "mail.example.at", "Primary", "known_fail", 2),
@@ -62,8 +68,12 @@ def test_shared_payloads_are_bounded_and_stable() -> None:
         "latest_report_date", "messages_latest_period", "pass_latest_period",
         "fail_latest_period", "pass_rate_latest_period", "messages_30d",
         "pass_rate_30d", "known_fail_30d", "unknown_pass_30d",
-        "unknown_fail_30d", "last_report", "last_reporting_org", "problem",
+        "unknown_fail_30d", "last_report", "last_reporting_org",
+        "last_successful_ingestion", "report_age_hours", "data_stale", "problem",
     }
+    assert state["last_successful_ingestion"] == "2026-08-31T01:15:00Z"
+    assert state["report_age_hours"] == 7.5
+    assert state["data_stale"] is False
     health = RuntimeHealth(imap_ok=False, storage_ok=False, last_storage_error="x" * 500)
     diagnostics = build_diagnostics_payload(snapshot(), health)
     assert diagnostics["imap_ok"] is False
@@ -85,13 +95,20 @@ def test_discovery_contains_one_device_and_all_stable_entity_ids() -> None:
     assert payload["state_topic"] == STATE_TOPIC
     assert payload["availability_topic"] == STATUS_TOPIC
     components = payload["cmps"]
-    assert len(components) == 13
+    assert len(components) == 16
     assert {component["default_entity_id"] for component in components.values()} == EXPECTED_ENTITY_IDS
-    assert len({component["unique_id"] for component in components.values()}) == 13
+    assert len({component["unique_id"] for component in components.values()}) == 16
     assert all(component["p"] in {"sensor", "binary_sensor"} for component in components.values())
     assert components["pass_rate_latest_period"]["unit_of_measurement"] == "%"
     assert "unknown" in components["pass_rate_latest_period"]["value_template"]
     assert components["last_report"]["device_class"] == "timestamp"
+    assert components["last_successful_ingestion"]["device_class"] == "timestamp"
+    assert "unknown" in components["last_successful_ingestion"]["value_template"]
+    assert components["report_age_hours"]["unit_of_measurement"] == "h"
+    assert "unknown" in components["report_age_hours"]["value_template"]
+    assert components["data_stale"]["p"] == "binary_sensor"
+    assert components["data_stale"]["device_class"] == "problem"
+    assert components["data_stale"]["value_template"] == "{{ 'ON' if value_json.data_stale else 'OFF' }}"
     assert components["problem"]["json_attributes_topic"] == DIAGNOSTICS_TOPIC
 
 

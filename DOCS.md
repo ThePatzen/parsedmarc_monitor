@@ -109,7 +109,7 @@ The App uses the latest report date present in SQLite for the `latest_period` se
 
 ## Home Assistant entities
 
-MQTT Discovery creates one **DMARC Monitor** device with these thirteen v1 entities:
+MQTT Discovery creates one **DMARC Monitor** device with these sixteen v1 entities:
 
 | Entity | Meaning |
 | --- | --- |
@@ -125,6 +125,9 @@ MQTT Discovery creates one **DMARC Monitor** device with these thirteen v1 entit
 | `sensor.dmarc_unknown_fail_30d` | Messages from unknown sources that failed DMARC in the rolling 30-day window. |
 | `sensor.dmarc_last_report` | Timestamp of the most recently represented report. |
 | `sensor.dmarc_last_reporting_org` | Organization that issued the most recent stored report. |
+| `sensor.dmarc_last_successful_ingestion` | Timestamp when the App last successfully persisted a report batch. |
+| `sensor.dmarc_report_age_hours` | Age in hours of the newest report's reporting-interval end; unavailable when no report exists. |
+| `binary_sensor.dmarc_data_stale` | On when there is no successful ingestion, no report end time, or the newest report ended more than 48 hours ago. |
 | `binary_sensor.dmarc_problem` | On for actionable latest-period `known_fail`/`unknown_pass` conditions. |
 
 The problem binary sensor exposes bounded diagnostic attributes including up to five problem sources plus `imap_ok`, `storage_ok`, and the last bounded storage error.
@@ -181,7 +184,7 @@ Until this App is published in a public custom repository, install it as a Local
 3. Open **DMARC Monitor** and build/install it.
 4. Configure the IMAP options and, optionally, `known_sources`.
 5. Start the App. `boot: auto` makes it start automatically on subsequent host boots.
-6. Check the App logs and then **Settings → Devices & services → MQTT** for the **DMARC Monitor** device and its thirteen entities.
+6. Check the App logs and then **Settings → Devices & services → MQTT** for the **DMARC Monitor** device and its sixteen entities.
 
 ### Later: custom repository
 

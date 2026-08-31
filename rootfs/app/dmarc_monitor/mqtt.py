@@ -37,6 +37,9 @@ def build_state_payload(snapshot: MetricsSnapshot) -> dict[str, object]:
         "unknown_fail_30d": snapshot.unknown_fail_30d,
         "last_report": snapshot.last_report,
         "last_reporting_org": snapshot.last_reporting_org,
+        "last_successful_ingestion": snapshot.last_successful_ingestion,
+        "report_age_hours": snapshot.report_age_hours,
+        "data_stale": snapshot.data_stale,
         "problem": snapshot.problem,
     }
 
@@ -117,6 +120,16 @@ def build_discovery_payload(app_version: str) -> dict[str, object]:
         "last_reporting_org": _sensor_component(
             "last_reporting_org", "Last reporting organization", "sensor.dmarc_last_reporting_org"
         ),
+        "last_successful_ingestion": _sensor_component(
+            "last_successful_ingestion",
+            "Last successful ingestion",
+            "sensor.dmarc_last_successful_ingestion",
+            device_class="timestamp",
+            nullable_number=True,
+        ),
+        "report_age_hours": _sensor_component(
+            "report_age_hours", "Report age", "sensor.dmarc_report_age_hours", unit="h", nullable_number=True
+        ),
         "problem": {
             "p": "binary_sensor",
             "name": "Problem",
@@ -126,6 +139,16 @@ def build_discovery_payload(app_version: str) -> dict[str, object]:
             "payload_on": "ON",
             "payload_off": "OFF",
             "json_attributes_topic": DIAGNOSTICS_TOPIC,
+        },
+        "data_stale": {
+            "p": "binary_sensor",
+            "name": "Data stale",
+            "unique_id": "ha_dmarc_monitor_data_stale",
+            "default_entity_id": "binary_sensor.dmarc_data_stale",
+            "device_class": "problem",
+            "value_template": "{{ 'ON' if value_json.data_stale else 'OFF' }}",
+            "payload_on": "ON",
+            "payload_off": "OFF",
         },
     }
     return {
