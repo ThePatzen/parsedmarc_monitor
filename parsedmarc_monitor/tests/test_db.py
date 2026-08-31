@@ -60,6 +60,42 @@ def test_query_deliveries_supports_failed_pagination_and_literal_search(tmp_path
     assert db.query_deliveries("2026-08-29", "2026-08-29", search="%", page_size=100).total == 0
 
 
+@pytest.mark.parametrize(
+    "field, value, expected",
+    [
+        ("source_ip", "198.51.100.20", 1),
+        ("source_reverse_dns", "MAIL.EXAMPLE.AT", 1),
+        ("known_source_name", "PRIMARY", 1),
+        ("header_from", "EXAMPLE.AT", 2),
+        ("envelope_from", "SPOOF.INVALID", 1),
+    ],
+)
+def test_query_deliveries_search_is_case_insensitive_for_required_fields(
+    tmp_path: Path, field: str, value: str, expected: int
+) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    db.persist_batch({"aggregate_reports": [load_fixture()]}, rules())
+
+    assert db.query_deliveries("2026-08-29", "2026-08-29", search=value).total == expected
+
+
+@pytest.mark.parametrize("needle", ["%", "_", "\\"])
+def test_query_deliveries_escapes_like_wildcards(tmp_path: Path, needle: str) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    db.persist_batch({"aggregate_reports": [load_fixture()]}, rules())
+    with sqlite3.connect(db.path) as connection:
+        connection.execute(
+            "UPDATE aggregate_rows SET envelope_from = ? WHERE dmarc_pass = 0",
+            (f"literal{needle}value",),
+        )
+
+    assert (
+        db.query_deliveries("2026-08-29", "2026-08-29", search=needle).total == 1
+    )
+
+
 def load_fixture() -> dict:
     path = Path(__file__).parent / "fixtures" / "aggregate_report.json"
     return json.loads(path.read_text(encoding="utf-8"))
