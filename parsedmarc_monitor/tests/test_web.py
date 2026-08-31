@@ -13,6 +13,7 @@ from urllib.parse import parse_qs
 
 import pytest
 
+import dmarc_monitor.web as web_module
 from dmarc_monitor.models import DeliveryDetail, DeliveryPage
 from dmarc_monitor.web import (
     DeliveryQuery,
@@ -212,7 +213,7 @@ SECURITY_HEADERS = {
 }
 
 
-STATIC_ROOT = Path(__file__).parents[1] / "rootfs" / "app" / "dmarc_monitor" / "static"
+STATIC_ROOT = Path(web_module.__file__).with_name("static")
 
 
 def test_http_serves_frontend_assets_with_expected_content_types_and_cache_policy() -> None:
