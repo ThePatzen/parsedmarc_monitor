@@ -23,6 +23,32 @@ def rules() -> tuple[KnownSourceRule, ...]:
     return (KnownSourceRule("Primary", ip_network("203.0.113.10/32"), None),)
 
 
+def create_realistic_v1_database(path: Path) -> None:
+    db = Database(path)
+    db.initialize()
+    db.persist_batch(
+        {"aggregate_reports": [load_fixture()]},
+        rules(),
+        datetime(2026, 8, 30, tzinfo=UTC),
+    )
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE reports SET report_fingerprint = ?",
+            ("1194ca84fa5bec05788e12fd1a9f50026378993b1fc16b7f1bc4ed060364ada2",),
+        )
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(reports)").fetchall()
+        }
+        if "fingerprint_version" in columns:
+            connection.execute("ALTER TABLE reports DROP COLUMN fingerprint_version")
+        connection.execute(
+            "UPDATE meta SET value = '1' WHERE key = 'schema_version'"
+        )
+        connection.execute(
+            "DELETE FROM meta WHERE key = 'last_successful_ingestion_ts'"
+        )
+
+
 def test_initialize_creates_schema_and_private_database(tmp_path: Path) -> None:
     path = tmp_path / "dmarc.sqlite3"
     db = Database(path)
@@ -36,23 +62,76 @@ def test_initialize_creates_schema_and_private_database(tmp_path: Path) -> None:
     assert {"reports", "aggregate_rows", "meta"} <= tables
 
 
-def test_initialize_migrates_version_1_database_to_current_schema(tmp_path: Path) -> None:
+def test_initialize_rejects_nonempty_database_without_meta_table(tmp_path: Path) -> None:
     path = tmp_path / "dmarc.sqlite3"
     with sqlite3.connect(path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE meta (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-            INSERT INTO meta(key, value) VALUES('schema_version', '1');
-            """
+        connection.execute("CREATE TABLE unrelated_data (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO unrelated_data(value) VALUES('preserve me')")
+
+    with pytest.raises(RuntimeError, match="meta"):
+        Database(path).initialize()
+
+    with sqlite3.connect(path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        value = connection.execute("SELECT value FROM unrelated_data").fetchone()[0]
+    assert tables == {"unrelated_data"}
+    assert value == "preserve me"
+
+
+def test_initialize_rejects_meta_table_without_schema_version(tmp_path: Path) -> None:
+    path = tmp_path / "dmarc.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO meta(key, value) VALUES('other', 'preserve me')"
         )
 
+    with pytest.raises(RuntimeError, match="schema version is missing"):
+        Database(path).initialize()
+
+    with sqlite3.connect(path) as connection:
+        rows = connection.execute("SELECT key, value FROM meta").fetchall()
+    assert rows == [("other", "preserve me")]
+
+
+def test_migrated_v1_exact_redelivery_is_singular_but_changed_content_is_distinct(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "dmarc.sqlite3"
+    create_realistic_v1_database(path)
     db = Database(path)
+
     db.initialize()
 
+    original = load_fixture()
+    exact_redelivery = db.persist_batch({"aggregate_reports": [original]}, rules())
+    changed = deepcopy(original)
+    changed["records"][0]["count"] = 11
+    changed_delivery = db.persist_batch({"aggregate_reports": [changed]}, rules())
+    repeated_changed_delivery = db.persist_batch(
+        {"aggregate_reports": [changed]}, rules()
+    )
+
     assert db.get_meta("schema_version") == "2"
+    assert exact_redelivery.reports_inserted == 0
+    assert exact_redelivery.rows_inserted == 0
+    assert changed_delivery.reports_inserted == 1
+    assert changed_delivery.rows_inserted == 2
+    assert repeated_changed_delivery.reports_inserted == 0
+    assert repeated_changed_delivery.rows_inserted == 0
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM reports").fetchone()[0] == 2
+        assert (
+            connection.execute("SELECT COUNT(*) FROM aggregate_rows").fetchone()[0]
+            == 4
+        )
 
 
 def test_initialize_rejects_malformed_schema_version(tmp_path: Path) -> None:

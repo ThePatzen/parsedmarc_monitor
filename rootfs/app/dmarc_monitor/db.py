@@ -19,6 +19,7 @@ _CURRENT_SCHEMA_SCRIPT = """
 CREATE TABLE IF NOT EXISTS reports (
     id INTEGER PRIMARY KEY,
     report_fingerprint TEXT NOT NULL UNIQUE,
+    fingerprint_version INTEGER NOT NULL DEFAULT 2,
     org_name TEXT NOT NULL,
     report_id TEXT NOT NULL,
     policy_domain TEXT NOT NULL,
@@ -71,7 +72,11 @@ CREATE TABLE IF NOT EXISTS meta (
 
 
 def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
-    """Establish the migration framework and freshness metadata contract."""
+    """Mark legacy metadata fingerprints for one-time promotion."""
+    connection.execute(
+        "ALTER TABLE reports ADD COLUMN "
+        "fingerprint_version INTEGER NOT NULL DEFAULT 1"
+    )
 
 
 MIGRATIONS: dict[int, Migration] = {1: _migrate_v1_to_v2}
@@ -95,10 +100,18 @@ class Database:
             connection.execute("PRAGMA journal_mode = WAL")
             try:
                 connection.execute("BEGIN")
-                meta_exists = connection.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'"
-                ).fetchone()
-                if meta_exists is None:
+                table_names = {
+                    str(row["name"])
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master "
+                        "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+                    ).fetchall()
+                }
+                if "meta" not in table_names:
+                    if table_names:
+                        raise RuntimeError(
+                            "database meta table is missing from a nonempty schema"
+                        )
                     self._create_current_schema(connection)
                     self._set_schema_version(connection, CURRENT_SCHEMA_VERSION)
                 else:
@@ -196,6 +209,20 @@ class Database:
         canonical = json.dumps(report, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _legacy_report_fingerprint(report: Mapping[str, Any]) -> str:
+        metadata = report["report_metadata"]
+        policy = report["policy_published"]
+        identity = [
+            metadata["org_name"],
+            metadata["report_id"],
+            policy["domain"],
+            metadata["begin_date"],
+            metadata["end_date"],
+        ]
+        canonical = json.dumps(identity, ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     def persist_batch(
         self,
         batch: Mapping[str, Any],
@@ -219,12 +246,32 @@ class Database:
                     metadata, policy, org_name, report_id, policy_domain, begin_ts, end_ts
                 ) = self._validated_report_identity(report)
                 fingerprint = self._report_fingerprint(report)
+                existing = connection.execute(
+                    "SELECT 1 FROM reports WHERE report_fingerprint = ?",
+                    (fingerprint,),
+                ).fetchone()
+                if existing is not None:
+                    continue
+
+                legacy_fingerprint = self._legacy_report_fingerprint(report)
+                promoted = connection.execute(
+                    """
+                    UPDATE reports
+                    SET report_fingerprint = ?, fingerprint_version = 2
+                    WHERE report_fingerprint = ? AND fingerprint_version = 1
+                    """,
+                    (fingerprint, legacy_fingerprint),
+                )
+                if promoted.rowcount:
+                    continue
+
                 cursor = connection.execute(
                     """
                     INSERT OR IGNORE INTO reports(
-                        report_fingerprint, org_name, report_id, policy_domain,
+                        report_fingerprint, fingerprint_version,
+                        org_name, report_id, policy_domain,
                         begin_ts, end_ts, received_ts, raw_schema, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         fingerprint,
