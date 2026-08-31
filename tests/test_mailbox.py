@@ -35,6 +35,9 @@ class RecordingPublisher:
         self.snapshots: list[object] = []
         self.raise_on_publish = raise_on_publish
 
+    def ensure_started(self) -> None:
+        pass
+
     def set_storage_health(self, ok: bool, error: str | None = None) -> None:
         self.storage_health.append((ok, error))
 
@@ -193,6 +196,41 @@ def test_run_forever_retries_connection_with_exponential_backoff(settings: Setti
 
     assert event.waits == [5, 10]
     assert publisher.imap_health[:2] == [False, False]
+
+
+def test_run_forever_asks_mqtt_to_recover_before_each_imap_attempt(settings: Settings) -> None:
+    event = FakeStopEvent()
+    lifecycle: list[str] = []
+
+    class RecoveryRecordingPublisher(RecordingPublisher):
+        def ensure_started(self) -> None:
+            lifecycle.append("mqtt")
+
+    publisher = RecoveryRecordingPublisher()
+    attempts = 0
+
+    def connection_factory(_: Settings) -> object:
+        nonlocal attempts
+        attempts += 1
+        lifecycle.append("imap")
+        if attempts == 3:
+            event.set()
+        raise ConnectionError("offline")
+
+    runner = MailboxRunner(
+        settings,
+        StubDatabase(),
+        publisher,
+        stop_event=event,
+        connection_factory=connection_factory,
+        get_reports=lambda *args, **kwargs: None,
+        watch_inbox=lambda *args, **kwargs: None,
+        parser_config_factory=lambda: object(),
+    )
+
+    runner.run_forever()
+
+    assert lifecycle == ["mqtt", "imap", "mqtt", "imap", "mqtt", "imap"]
 
 
 def test_backoff_is_capped_at_300_seconds(settings: Settings) -> None:

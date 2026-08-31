@@ -140,6 +140,7 @@ class MailboxRunner:
         delay = INITIAL_BACKOFF_SECONDS
 
         while not self.stop_event.is_set():
+            self.publisher.ensure_started()
             try:
                 connection = self.connection_factory(self.settings)
                 self.publisher.set_imap_ok(True)

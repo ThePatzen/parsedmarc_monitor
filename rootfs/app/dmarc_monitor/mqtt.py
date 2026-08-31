@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import asdict, dataclass
 from typing import Callable
 
@@ -195,37 +196,86 @@ class MqttPublisher:
         self._client: object | None = None
         self._connected = False
         self._started = False
+        self._startup_token: object | None = None
         self._latest_snapshot: MetricsSnapshot | None = None
         self._health = RuntimeHealth()
+        self._lock = threading.RLock()
 
     @property
     def is_connected(self) -> bool:
-        return self._connected
+        with self._lock:
+            return self._connected
 
     def start(self) -> None:
-        if self._started:
-            return
+        self.ensure_started()
+
+    def ensure_started(self) -> None:
+        with self._lock:
+            if self._started:
+                return
+            token = object()
+            self._started = True
+            self._startup_token = token
+
+        client: object | None = None
         try:
             factory = self.client_factory
             client = factory() if factory is not None else _default_client_factory()
-            self._client = client
             client.on_connect = self._on_connect
             client.on_disconnect = self._on_disconnect
             client.on_message = self._on_message
+            with self._lock:
+                if self._startup_token is not token:
+                    cancelled = True
+                else:
+                    self._client = client
+                    cancelled = False
+            if cancelled:
+                self._cleanup_client(client)
+                return
+
             client.username_pw_set(self.settings.username, self.settings.password)
             client.reconnect_delay_set(min_delay=1, max_delay=60)
             client.will_set(STATUS_TOPIC, payload="offline", qos=1, retain=True)
             client.connect_async(self.settings.host, self.settings.port, keepalive=60)
             client.loop_start()
-            self._started = True
+
+            with self._lock:
+                if self._startup_token is token and self._client is client:
+                    self._startup_token = None
+                    return
         except Exception:
             LOGGER.exception("Unable to start MQTT publisher")
-            self._client = None
-            self._connected = False
+            with self._lock:
+                if self._startup_token is token:
+                    self._startup_token = None
+                    self._started = False
+                    self._connected = False
+                    if self._client is client:
+                        self._client = None
+            if client is not None:
+                self._cleanup_client(client)
+            return
+
+        self._cleanup_client(client)
+
+    def _cleanup_client(self, client: object) -> None:
+        try:
+            client.loop_stop()
+        except Exception:
+            LOGGER.exception("Unable to stop partial MQTT loop")
+        try:
+            client.disconnect()
+        except Exception:
+            LOGGER.exception("Unable to disconnect partial MQTT client")
 
     def stop(self) -> None:
-        client = self._client
-        self._connected = False
+        with self._lock:
+            client = self._client
+            self._client = None
+            self._connected = False
+            self._started = False
+            self._startup_token = None
         if client is None:
             return
         try:
@@ -240,54 +290,81 @@ class MqttPublisher:
             client.disconnect()
         except Exception:
             LOGGER.exception("Unable to disconnect MQTT client")
-        self._started = False
 
     def publish_snapshot(self, snapshot: MetricsSnapshot) -> None:
-        self._latest_snapshot = snapshot
-        if not self._connected:
+        with self._lock:
+            self._latest_snapshot = snapshot
+            connected = self._connected
+        if not connected:
             return
         self._publish_snapshot_payloads(snapshot)
 
     def set_imap_ok(self, value: bool) -> None:
-        self._health = RuntimeHealth(value, self._health.storage_ok, self._health.last_storage_error)
+        with self._lock:
+            self._health = RuntimeHealth(value, self._health.storage_ok, self._health.last_storage_error)
         self._publish_health_if_connected()
 
     def set_storage_health(self, ok: bool, error: str | None = None) -> None:
-        self._health = RuntimeHealth(self._health.imap_ok, ok, None if ok else error)
+        with self._lock:
+            self._health = RuntimeHealth(self._health.imap_ok, ok, None if ok else error)
         self._publish_health_if_connected()
 
     def _snapshot(self) -> MetricsSnapshot | None:
-        if self._latest_snapshot is not None:
-            return self._latest_snapshot
+        with self._lock:
+            latest_snapshot = self._latest_snapshot
+        if latest_snapshot is not None:
+            return latest_snapshot
         try:
-            self._latest_snapshot = self.snapshot_provider()
+            provided_snapshot = self.snapshot_provider()
         except Exception:
             LOGGER.exception("Unable to build MQTT snapshot")
             return None
-        return self._latest_snapshot
+        with self._lock:
+            if self._latest_snapshot is None:
+                self._latest_snapshot = provided_snapshot
+            return self._latest_snapshot
 
-    def _safe_publish(self, topic: str, payload: str, *, retain: bool = True) -> None:
-        client = self._client
-        if client is None:
-            return
+    def _safe_publish(self, topic: str, payload: str, *, retain: bool = True) -> bool:
+        with self._lock:
+            client = self._client
+            if client is None or not self._connected:
+                return False
         try:
-            client.publish(topic, payload, qos=1, retain=retain)
+            result = client.publish(topic, payload, qos=1, retain=retain)
         except Exception:
             LOGGER.exception("Unable to publish MQTT topic %s", topic)
+            with self._lock:
+                if self._client is client:
+                    self._connected = False
+            return False
 
-    def _publish_json(self, topic: str, payload: dict[str, object]) -> None:
-        self._safe_publish(topic, json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        return_code = getattr(result, "rc", None)
+        if return_code == 0:
+            return True
+
+        LOGGER.warning("Unable to publish MQTT topic %s (rc=%s)", topic, return_code)
+        with self._lock:
+            if self._client is client:
+                self._connected = False
+        return False
+
+    def _publish_json(self, topic: str, payload: dict[str, object]) -> bool:
+        return self._safe_publish(topic, json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
     def _publish_snapshot_payloads(self, snapshot: MetricsSnapshot) -> None:
         self._publish_json(STATE_TOPIC, build_state_payload(snapshot))
-        self._publish_json(DIAGNOSTICS_TOPIC, build_diagnostics_payload(snapshot, self._health))
+        with self._lock:
+            health = self._health
+        self._publish_json(DIAGNOSTICS_TOPIC, build_diagnostics_payload(snapshot, health))
 
     def _publish_health_if_connected(self) -> None:
-        if not self._connected:
-            return
+        with self._lock:
+            if not self._connected:
+                return
+            health = self._health
         snapshot = self._snapshot()
         if snapshot is not None:
-            self._publish_json(DIAGNOSTICS_TOPIC, build_diagnostics_payload(snapshot, self._health))
+            self._publish_json(DIAGNOSTICS_TOPIC, build_diagnostics_payload(snapshot, health))
 
     def _republish_all(self) -> None:
         try:
@@ -300,10 +377,15 @@ class MqttPublisher:
 
     def _on_connect(self, client: object, userdata: object, flags: object, reason_code: object, properties: object) -> None:
         if getattr(reason_code, "is_failure", False) or (isinstance(reason_code, int) and reason_code != 0):
-            self._connected = False
+            with self._lock:
+                if self._client is client:
+                    self._connected = False
             LOGGER.warning("MQTT connection rejected: %s", reason_code)
             return
-        self._connected = True
+        with self._lock:
+            if self._client is not client:
+                return
+            self._connected = True
         try:
             client.subscribe(HA_STATUS_TOPIC, qos=1)
         except Exception:
@@ -312,10 +394,15 @@ class MqttPublisher:
         self._republish_all()
 
     def _on_disconnect(self, client: object, userdata: object, disconnect_flags: object, reason_code: object, properties: object) -> None:
-        self._connected = False
+        with self._lock:
+            if self._client is client:
+                self._connected = False
 
     def _on_message(self, client: object, userdata: object, message: object) -> None:
         try:
+            with self._lock:
+                if self._client is not client:
+                    return
             topic = getattr(message, "topic", "")
             payload = getattr(message, "payload", b"")
             if topic == HA_STATUS_TOPIC and bytes(payload).decode("utf-8", errors="replace").strip().lower() == "online":

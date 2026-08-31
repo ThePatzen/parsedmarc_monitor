@@ -121,6 +121,7 @@ class FakeClient:
         self.calls: list[tuple] = []
         self.publishes: list[tuple[str, str, int, bool]] = []
         self.subscriptions: list[tuple[str, int]] = []
+        self.publish_rc = 0
 
     def username_pw_set(self, username: str, password: str) -> None:
         self.calls.append(("username_pw_set", username, password))
@@ -148,7 +149,7 @@ class FakeClient:
 
     def publish(self, topic: str, payload: str, qos: int = 0, retain: bool = False) -> object:
         self.publishes.append((topic, payload, qos, retain))
-        return SimpleNamespace(rc=0)
+        return SimpleNamespace(rc=self.publish_rc)
 
 
 def make_publisher(fake: FakeClient, initial: MetricsSnapshot | None = None) -> MqttPublisher:
@@ -214,6 +215,45 @@ def test_disconnected_snapshot_is_cached_and_republished_on_reconnect() -> None:
     fake.on_connect(fake, None, None, 0, None)
     state_messages = [json.loads(payload) for topic, payload, _, _ in fake.publishes if topic == STATE_TOPIC]
     assert state_messages[-1]["messages_latest_period"] == 99
+
+
+def test_publish_return_code_failure_disconnects_and_preserves_latest_snapshot() -> None:
+    fake = FakeClient()
+    publisher = make_publisher(fake)
+    publisher.start()
+    fake.on_connect(fake, None, None, 0, None)
+    fake.publishes.clear()
+    fake.publish_rc = 4
+    newer = replace(snapshot(), messages_latest_period=99)
+
+    publisher.publish_snapshot(newer)
+
+    assert publisher.is_connected is False
+    fake.publish_rc = 0
+    fake.on_connect(fake, None, None, 0, None)
+    state_messages = [json.loads(payload) for topic, payload, _, _ in fake.publishes if topic == STATE_TOPIC]
+    assert state_messages[-1]["messages_latest_period"] == 99
+
+
+def test_ensure_started_retries_after_client_factory_failure() -> None:
+    fake = FakeClient()
+    attempts = 0
+
+    def factory() -> FakeClient:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("factory unavailable")
+        return fake
+
+    settings = MqttSettings("core-mosquitto", 1883, "service-user", "service-pass")
+    publisher = MqttPublisher(settings, "0.1.0", snapshot, client_factory=factory)
+
+    publisher.ensure_started()
+    publisher.ensure_started()
+
+    assert attempts == 2
+    assert ("loop_start",) in fake.calls
 
 
 def test_health_updates_and_stop_are_non_throwing() -> None:
