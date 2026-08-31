@@ -66,6 +66,12 @@ class StubDatabase:
     def latest_report_date(self) -> str | None:
         return None
 
+    def latest_report_end_ts(self) -> int | None:
+        return None
+
+    def last_successful_ingestion(self) -> str | None:
+        return None
+
     def counts_since_report_date(self, cutoff_date: str):
         from dmarc_monitor.models import CountSummary
 

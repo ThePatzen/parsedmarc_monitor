@@ -76,3 +76,6 @@ class MetricsSnapshot:
     last_reporting_org: str | None
     problem: bool
     problem_sources: tuple[ProblemSource, ...]
+    last_successful_ingestion: str | None = None
+    report_age_hours: float | None = None
+    data_stale: bool = True

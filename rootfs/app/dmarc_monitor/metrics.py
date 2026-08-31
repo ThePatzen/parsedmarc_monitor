@@ -26,6 +26,13 @@ def build_metrics(database: Database, now: datetime | None = None) -> MetricsSna
     cutoff_date = (current.date() - timedelta(days=29)).isoformat()
     rolling = database.counts_since_report_date(cutoff_date)
     last_report, last_reporting_org = database.latest_report_metadata()
+    latest_report_end_ts = database.latest_report_end_ts()
+    last_successful_ingestion = database.last_successful_ingestion()
+    report_age_seconds = current.timestamp() - latest_report_end_ts if latest_report_end_ts is not None else None
+    report_age_hours = round(report_age_seconds / 3600, 2) if report_age_seconds is not None else None
+    data_stale = (
+        last_successful_ingestion is None or report_age_seconds is None or report_age_seconds > 48 * 3600
+    )
     problem = latest.known_fail > 0 or latest.unknown_pass > 0
     problem_sources = database.top_problem_sources(latest_date) if latest_date and problem else ()
 
@@ -42,6 +49,9 @@ def build_metrics(database: Database, now: datetime | None = None) -> MetricsSna
         unknown_fail_30d=rolling.unknown_fail,
         last_report=last_report,
         last_reporting_org=last_reporting_org,
+        last_successful_ingestion=last_successful_ingestion,
+        report_age_hours=report_age_hours,
+        data_stale=data_stale,
         problem=problem,
         problem_sources=problem_sources,
     )

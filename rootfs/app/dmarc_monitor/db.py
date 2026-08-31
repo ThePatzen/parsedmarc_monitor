@@ -298,6 +298,11 @@ class Database:
                         ),
                     )
                     rows_inserted += 1
+            connection.execute(
+                "INSERT INTO meta(key, value) VALUES(?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                ("last_successful_ingestion_ts", str(received_ts)),
+            )
             connection.commit()
         except Exception:
             connection.rollback()
@@ -371,6 +376,17 @@ class Database:
         with self._connect() as connection:
             row = connection.execute("SELECT MAX(report_date) AS report_date FROM aggregate_rows").fetchone()
         return row["report_date"] if row and row["report_date"] else None
+
+    def latest_report_end_ts(self) -> int | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT MAX(end_ts) AS end_ts FROM reports").fetchone()
+        return int(row["end_ts"]) if row and row["end_ts"] is not None else None
+
+    def last_successful_ingestion(self) -> str | None:
+        value = self.get_meta("last_successful_ingestion_ts")
+        if value is None:
+            return None
+        return datetime.fromtimestamp(int(value), tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def counts_for_report_date(self, report_date: str) -> CountSummary:
         return self._counts("report_date = ?", (report_date,))

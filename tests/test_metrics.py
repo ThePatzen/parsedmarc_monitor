@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from copy import deepcopy
 from datetime import UTC, datetime
 from ipaddress import ip_network
@@ -91,6 +92,56 @@ def test_build_metrics_empty_database(tmp_path: Path) -> None:
     assert snapshot.messages_30d == 0
     assert snapshot.pass_rate_30d is None
     assert snapshot.problem is False
+
+
+def test_build_metrics_treats_exactly_48_hours_as_fresh_and_one_second_later_as_stale(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    db.persist_batch(
+        {"aggregate_reports": [fixture()]}, rules(), datetime(2026, 8, 30, tzinfo=UTC)
+    )
+
+    snapshot = build_metrics(db, datetime(2026, 8, 31, 23, 59, 59, tzinfo=UTC))
+
+    assert snapshot.last_successful_ingestion == "2026-08-30T00:00:00Z"
+    assert snapshot.report_age_hours == 48.0
+    assert snapshot.data_stale is False
+
+    stale_snapshot = build_metrics(db, datetime(2026, 9, 1, tzinfo=UTC))
+
+    assert stale_snapshot.report_age_hours == 48.0
+    assert stale_snapshot.data_stale is True
+
+
+def test_build_metrics_marks_an_empty_database_as_stale_with_nullable_freshness(tmp_path: Path) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+
+    snapshot = build_metrics(db, datetime(2026, 8, 31, tzinfo=UTC))
+
+    assert snapshot.last_successful_ingestion is None
+    assert snapshot.report_age_hours is None
+    assert snapshot.data_stale is True
+
+
+def test_build_metrics_marks_missing_successful_ingestion_as_stale_and_rounds_report_age(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    db.persist_batch(
+        {"aggregate_reports": [fixture()]}, rules(), datetime(2026, 8, 30, tzinfo=UTC)
+    )
+    with sqlite3.connect(db.path) as connection:
+        connection.execute("DELETE FROM meta WHERE key = ?", ("last_successful_ingestion_ts",))
+
+    snapshot = build_metrics(db, datetime(2026, 8, 30, 1, 14, 5, tzinfo=UTC))
+
+    assert snapshot.last_successful_ingestion is None
+    assert snapshot.report_age_hours == 1.24
+    assert snapshot.data_stale is True
 
 
 def test_daily_maintenance_deletes_expired_reports_only_once_per_day(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -110,6 +110,40 @@ def test_persist_batch_is_idempotent(tmp_path: Path) -> None:
     assert counts.unknown_fail == 3
 
 
+def test_persist_batch_records_successful_ingestion_for_new_and_duplicate_batches(tmp_path: Path) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    batch = {"aggregate_reports": [load_fixture()]}
+
+    db.persist_batch(batch, rules(), datetime(2026, 8, 31, 6, tzinfo=UTC))
+
+    assert db.last_successful_ingestion() == "2026-08-31T06:00:00Z"
+    assert db.latest_report_end_ts() == int(datetime(2026, 8, 29, 23, 59, 59, tzinfo=UTC).timestamp())
+
+    db.persist_batch(batch, rules(), datetime(2026, 8, 31, 9, tzinfo=UTC))
+
+    assert db.last_successful_ingestion() == "2026-08-31T09:00:00Z"
+
+
+def test_persist_batch_rolls_back_ingestion_freshness_for_invalid_batch(tmp_path: Path) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    db.persist_batch(
+        {"aggregate_reports": [load_fixture()]}, rules(), datetime(2026, 8, 31, 6, tzinfo=UTC)
+    )
+    invalid_report = load_fixture()
+    invalid_report["report_metadata"] = "invalid"
+
+    with pytest.raises(ValueError):
+        db.persist_batch(
+            {"aggregate_reports": [load_fixture(), invalid_report]},
+            rules(),
+            datetime(2026, 8, 31, 9, tzinfo=UTC),
+        )
+
+    assert db.last_successful_ingestion() == "2026-08-31T06:00:00Z"
+
+
 @pytest.mark.parametrize(
     ("case", "mutate"),
     [
