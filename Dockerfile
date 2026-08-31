@@ -13,8 +13,10 @@ COPY requirements-dev.txt /tmp/requirements-dev.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-dev.txt
 COPY rootfs/app /app
 COPY tests /tests
+COPY pyproject.toml /pyproject.toml
 ENV PYTHONPATH="/app"
-CMD ["/opt/venv/bin/python3", "-m", "pytest", "/tests", "-q"]
+ENTRYPOINT ["/opt/venv/bin/python3"]
+CMD ["-m", "pytest", "/tests", "-q"]
 
 FROM ${BUILD_FROM} AS runtime
 RUN apk add --no-cache libxml2 libxslt libffi openssl ca-certificates

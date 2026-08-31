@@ -14,4 +14,4 @@ jobs:
       - name: Run tests
         run: docker run --rm parsedmarc-monitor-test:ci
       - name: Run Ruff
-        run: docker run --rm --entrypoint /opt/venv/bin/ruff parsedmarc-monitor-test:ci check /app /tests
+        run: docker run --rm --entrypoint /opt/venv/bin/ruff parsedmarc-monitor-test:ci --config /pyproject.toml check /app /tests

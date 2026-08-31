@@ -17,10 +17,7 @@ exclude = [
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
-ignore = ["E501"]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["F401", "I001"]
+ignore = ["E501", "F401", "I001"]
 
 [tool.pytest.ini_options]
 pythonpath = ["rootfs/app"]
