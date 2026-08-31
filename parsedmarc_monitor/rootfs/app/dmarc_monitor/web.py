@@ -180,10 +180,10 @@ def create_handler(
                     self._send_error_json(404, "not found")
             except QueryError as exc:
                 self._send_error_json(400, str(exc))
-            except ValueError as exc:
-                self._send_error_json(400, str(exc))
-            except Exception:
-                logger.exception("unexpected web request failure")
+            except Exception as exc:
+                logger.error(
+                    "unexpected web request failure type=%s", type(exc).__name__
+                )
                 self._send_error_json(500, "internal server error")
 
         def do_POST(self) -> None:  # noqa: N802

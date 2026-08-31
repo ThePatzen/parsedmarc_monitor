@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from dataclasses import asdict
 from http.client import RemoteDisconnected
@@ -165,6 +166,11 @@ class FailingDatabase:
         raise RuntimeError("database secret should not be returned")
 
 
+class ValueErrorDatabase:
+    def query_deliveries(self, **kwargs):
+        raise ValueError("database password=sentinel")
+
+
 def running_server(database, tmp_path: Path, allowed_clients: frozenset[str] | None = None):
     handler = create_handler(
         database,
@@ -254,6 +260,19 @@ def test_http_returns_generic_500_without_exception_text() -> None:
         assert response.status == 500
         assert "database secret" not in body
         assert json.loads(body) == {"error": "internal server error"}
+
+
+def test_http_sanitizes_unexpected_value_error_and_logs_no_exception_text(caplog) -> None:
+    with caplog.at_level(logging.DEBUG, logger="dmarc_monitor.web"):
+        for server in running_server(ValueErrorDatabase(), Path(__file__).parent):
+            response = request(
+                server,
+                "/api/deliveries?date_from=2026-08-24&date_to=2026-08-30",
+            )
+            body = response.read().decode("utf-8")
+            assert response.status == 500
+            assert json.loads(body) == {"error": "internal server error"}
+    assert "sentinel" not in caplog.text
 
 
 def test_http_denies_clients_not_in_allowlist() -> None:
