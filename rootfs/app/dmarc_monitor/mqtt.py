@@ -128,7 +128,12 @@ def build_discovery_payload(app_version: str) -> dict[str, object]:
             nullable_number=True,
         ),
         "report_age_hours": _sensor_component(
-            "report_age_hours", "Report age", "sensor.dmarc_report_age_hours", unit="h", nullable_number=True
+            "report_age_hours",
+            "Report age",
+            "sensor.dmarc_report_age_hours",
+            unit="h",
+            device_class="duration",
+            nullable_number=True,
         ),
         "problem": {
             "p": "binary_sensor",

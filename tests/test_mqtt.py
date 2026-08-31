@@ -105,6 +105,7 @@ def test_discovery_contains_one_device_and_all_stable_entity_ids() -> None:
     assert components["last_successful_ingestion"]["device_class"] == "timestamp"
     assert "unknown" in components["last_successful_ingestion"]["value_template"]
     assert components["report_age_hours"]["unit_of_measurement"] == "h"
+    assert components["report_age_hours"]["device_class"] == "duration"
     assert "unknown" in components["report_age_hours"]["value_template"]
     assert components["data_stale"]["p"] == "binary_sensor"
     assert components["data_stale"]["device_class"] == "problem"
