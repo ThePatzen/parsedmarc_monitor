@@ -4,13 +4,77 @@ import hashlib
 import json
 import os
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .classifier import match_known_source
 from .models import CountSummary, KnownSourceRule, PersistResult, ProblemSource
+
+CURRENT_SCHEMA_VERSION = 2
+Migration = Callable[[sqlite3.Connection], None]
+
+_CURRENT_SCHEMA_SCRIPT = """
+CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY,
+    report_fingerprint TEXT NOT NULL UNIQUE,
+    org_name TEXT NOT NULL,
+    report_id TEXT NOT NULL,
+    policy_domain TEXT NOT NULL,
+    begin_ts INTEGER NOT NULL,
+    end_ts INTEGER NOT NULL,
+    received_ts INTEGER NOT NULL,
+    raw_schema TEXT,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS aggregate_rows (
+    id INTEGER PRIMARY KEY,
+    report_id_fk INTEGER NOT NULL,
+    source_ip TEXT NOT NULL,
+    source_reverse_dns TEXT,
+    source_base_domain TEXT,
+    source_name TEXT,
+    source_asn INTEGER,
+    source_as_name TEXT,
+    source_country TEXT,
+    interval_begin_ts INTEGER NOT NULL,
+    interval_end_ts INTEGER NOT NULL,
+    report_date TEXT NOT NULL,
+    message_count INTEGER NOT NULL,
+    header_from TEXT NOT NULL,
+    envelope_from TEXT,
+    disposition TEXT,
+    dkim_result TEXT,
+    spf_result TEXT,
+    dkim_aligned INTEGER NOT NULL,
+    spf_aligned INTEGER NOT NULL,
+    dmarc_pass INTEGER NOT NULL,
+    known_source INTEGER NOT NULL,
+    known_source_name TEXT,
+    FOREIGN KEY(report_id_fk) REFERENCES reports(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_reports_begin_end ON reports(begin_ts, end_ts);
+CREATE INDEX IF NOT EXISTS idx_aggregate_rows_source_ip ON aggregate_rows(source_ip);
+CREATE INDEX IF NOT EXISTS idx_aggregate_rows_header_from ON aggregate_rows(header_from);
+CREATE INDEX IF NOT EXISTS idx_aggregate_rows_dmarc_pass ON aggregate_rows(dmarc_pass);
+CREATE INDEX IF NOT EXISTS idx_aggregate_rows_known_source ON aggregate_rows(known_source);
+CREATE INDEX IF NOT EXISTS idx_aggregate_rows_report_date ON aggregate_rows(report_date);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+"""
+
+
+def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
+    """Establish the migration framework and freshness metadata contract."""
+
+
+MIGRATIONS: dict[int, Migration] = {1: _migrate_v1_to_v2}
 
 
 class Database:
@@ -29,66 +93,57 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS reports (
-                    id INTEGER PRIMARY KEY,
-                    report_fingerprint TEXT NOT NULL UNIQUE,
-                    org_name TEXT NOT NULL,
-                    report_id TEXT NOT NULL,
-                    policy_domain TEXT NOT NULL,
-                    begin_ts INTEGER NOT NULL,
-                    end_ts INTEGER NOT NULL,
-                    received_ts INTEGER NOT NULL,
-                    raw_schema TEXT,
-                    created_at INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS aggregate_rows (
-                    id INTEGER PRIMARY KEY,
-                    report_id_fk INTEGER NOT NULL,
-                    source_ip TEXT NOT NULL,
-                    source_reverse_dns TEXT,
-                    source_base_domain TEXT,
-                    source_name TEXT,
-                    source_asn INTEGER,
-                    source_as_name TEXT,
-                    source_country TEXT,
-                    interval_begin_ts INTEGER NOT NULL,
-                    interval_end_ts INTEGER NOT NULL,
-                    report_date TEXT NOT NULL,
-                    message_count INTEGER NOT NULL,
-                    header_from TEXT NOT NULL,
-                    envelope_from TEXT,
-                    disposition TEXT,
-                    dkim_result TEXT,
-                    spf_result TEXT,
-                    dkim_aligned INTEGER NOT NULL,
-                    spf_aligned INTEGER NOT NULL,
-                    dmarc_pass INTEGER NOT NULL,
-                    known_source INTEGER NOT NULL,
-                    known_source_name TEXT,
-                    FOREIGN KEY(report_id_fk) REFERENCES reports(id) ON DELETE CASCADE
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_reports_begin_end ON reports(begin_ts, end_ts);
-                CREATE INDEX IF NOT EXISTS idx_aggregate_rows_source_ip ON aggregate_rows(source_ip);
-                CREATE INDEX IF NOT EXISTS idx_aggregate_rows_header_from ON aggregate_rows(header_from);
-                CREATE INDEX IF NOT EXISTS idx_aggregate_rows_dmarc_pass ON aggregate_rows(dmarc_pass);
-                CREATE INDEX IF NOT EXISTS idx_aggregate_rows_known_source ON aggregate_rows(known_source);
-                CREATE INDEX IF NOT EXISTS idx_aggregate_rows_report_date ON aggregate_rows(report_date);
-
-                CREATE TABLE IF NOT EXISTS meta (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
-                """
-            )
-            connection.execute(
-                "INSERT INTO meta(key, value) VALUES('schema_version', '1') "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
-            )
+            try:
+                connection.execute("BEGIN")
+                meta_exists = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'"
+                ).fetchone()
+                if meta_exists is None:
+                    self._create_current_schema(connection)
+                    self._set_schema_version(connection, CURRENT_SCHEMA_VERSION)
+                else:
+                    schema_version = self._read_schema_version(connection)
+                    while schema_version < CURRENT_SCHEMA_VERSION:
+                        migration = MIGRATIONS.get(schema_version)
+                        if migration is None:
+                            raise RuntimeError(f"no migration found for schema version {schema_version}")
+                        migration(connection)
+                        schema_version += 1
+                        self._set_schema_version(connection, schema_version)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
         os.chmod(self.path, 0o600)
+
+    @staticmethod
+    def _create_current_schema(connection: sqlite3.Connection) -> None:
+        for statement in _CURRENT_SCHEMA_SCRIPT.split(";"):
+            if statement.strip():
+                connection.execute(statement)
+
+    @staticmethod
+    def _read_schema_version(connection: sqlite3.Connection) -> int:
+        row = connection.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        if row is None:
+            raise RuntimeError("database schema version is missing")
+        try:
+            schema_version = int(row["value"])
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("database schema version is malformed") from exc
+        if schema_version < 1:
+            raise RuntimeError(f"unsupported database schema version {schema_version}")
+        if schema_version > CURRENT_SCHEMA_VERSION:
+            raise RuntimeError(f"database schema version {schema_version} is newer than supported")
+        return schema_version
+
+    @staticmethod
+    def _set_schema_version(connection: sqlite3.Connection, schema_version: int) -> None:
+        connection.execute(
+            "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (str(schema_version),),
+        )
 
     @staticmethod
     def _timestamp(value: Any) -> int:

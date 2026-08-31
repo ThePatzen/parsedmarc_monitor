@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from ipaddress import ip_network
 from pathlib import Path
 
+import pytest
+
 from dmarc_monitor.db import Database
 from dmarc_monitor.models import KnownSourceRule
 
@@ -28,10 +30,63 @@ def test_initialize_creates_schema_and_private_database(tmp_path: Path) -> None:
 
     mode = stat.S_IMODE(path.stat().st_mode)
     assert mode == 0o600
-    assert db.get_meta("schema_version") == "1"
+    assert db.get_meta("schema_version") == "2"
     with sqlite3.connect(path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"reports", "aggregate_rows", "meta"} <= tables
+
+
+def test_initialize_migrates_version_1_database_to_current_schema(tmp_path: Path) -> None:
+    path = tmp_path / "dmarc.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO meta(key, value) VALUES('schema_version', '1');
+            """
+        )
+
+    db = Database(path)
+    db.initialize()
+
+    assert db.get_meta("schema_version") == "2"
+
+
+def test_initialize_rejects_malformed_schema_version(tmp_path: Path) -> None:
+    path = tmp_path / "dmarc.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO meta(key, value) VALUES('schema_version', 'abc');
+            """
+        )
+
+    with pytest.raises(RuntimeError):
+        Database(path).initialize()
+
+
+def test_initialize_rejects_future_schema_version(tmp_path: Path) -> None:
+    path = tmp_path / "dmarc.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            INSERT INTO meta(key, value) VALUES('schema_version', '999');
+            """
+        )
+
+    with pytest.raises(RuntimeError):
+        Database(path).initialize()
 
 
 def test_persist_batch_is_idempotent(tmp_path: Path) -> None:
