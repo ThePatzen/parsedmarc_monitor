@@ -526,10 +526,12 @@ class Database:
         classification = ("known_" if row["known_source"] else "unknown_") + (
             "pass" if row["dmarc_pass"] else "fail"
         )
+
         def format_ts(value: object) -> str:
             return datetime.fromtimestamp(int(value), tz=UTC).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             )
+
         return DeliveryDetail(
             id=int(row["id"]), report_date=str(row["report_date"]),
             interval_begin=format_ts(row["interval_begin_ts"]), interval_end=format_ts(row["interval_end_ts"]),
