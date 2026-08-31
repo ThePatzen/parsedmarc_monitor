@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build test image
-        run: docker build --target test -t parsedmarc-monitor-test:ci .
+        run: docker build --target test -t parsedmarc-monitor-test:ci ./parsedmarc_monitor
       - name: Run tests
         run: docker run --rm parsedmarc-monitor-test:ci
       - name: Run Ruff
