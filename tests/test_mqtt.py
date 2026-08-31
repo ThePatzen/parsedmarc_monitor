@@ -105,12 +105,15 @@ def test_discovery_contains_one_device_and_all_stable_entity_ids() -> None:
     assert "unknown" in components["pass_rate_latest_period"]["value_template"]
     assert components["last_report"]["device_class"] == "timestamp"
     assert components["last_successful_ingestion"]["device_class"] == "timestamp"
+    assert components["last_successful_ingestion"]["default_entity_id"] == "sensor.dmarc_last_successful_ingestion"
     assert "unknown" in components["last_successful_ingestion"]["value_template"]
     assert components["report_age_hours"]["unit_of_measurement"] == "h"
     assert components["report_age_hours"]["device_class"] == "duration"
+    assert components["report_age_hours"]["default_entity_id"] == "sensor.dmarc_report_age_hours"
     assert "unknown" in components["report_age_hours"]["value_template"]
     assert components["data_stale"]["p"] == "binary_sensor"
     assert components["data_stale"]["device_class"] == "problem"
+    assert components["data_stale"]["default_entity_id"] == "binary_sensor.dmarc_data_stale"
     assert components["data_stale"]["value_template"] == "{{ 'ON' if value_json.data_stale else 'OFF' }}"
     assert components["problem"]["json_attributes_topic"] == DIAGNOSTICS_TOPIC
 

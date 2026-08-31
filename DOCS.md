@@ -109,7 +109,7 @@ The App uses the latest report date present in SQLite for the `latest_period` se
 
 ## Home Assistant entities
 
-MQTT Discovery creates one **DMARC Monitor** device with these sixteen v1 entities:
+MQTT Discovery creates one **DMARC Monitor** device with these sixteen entities:
 
 | Entity | Meaning |
 | --- | --- |
@@ -126,9 +126,11 @@ MQTT Discovery creates one **DMARC Monitor** device with these sixteen v1 entiti
 | `sensor.dmarc_last_report` | Timestamp of the most recently represented report. |
 | `sensor.dmarc_last_reporting_org` | Organization that issued the most recent stored report. |
 | `sensor.dmarc_last_successful_ingestion` | Timestamp when the App last successfully persisted a report batch. |
-| `sensor.dmarc_report_age_hours` | Age in hours of the newest report's reporting-interval end; unavailable when no report exists. |
+| `sensor.dmarc_report_age_hours` | Age in hours of the newest report's reporting-interval end; its Home Assistant state is `unknown` when no report end is available. |
 | `binary_sensor.dmarc_data_stale` | On when there is no successful ingestion, no report end time, or the newest report ended more than 48 hours ago. |
 | `binary_sensor.dmarc_problem` | On for actionable latest-period `known_fail`/`unknown_pass` conditions. |
+
+`binary_sensor.dmarc_data_stale` turns on when no successful ingestion has been recorded, no report end is available, or the newest reporting interval ended **more than** 48 hours ago. At exactly 48 hours it remains off. `sensor.dmarc_last_successful_ingestion` is a UTC timestamp, and `sensor.dmarc_report_age_hours` is a Home Assistant duration sensor in hours.
 
 The problem binary sensor exposes bounded diagnostic attributes including up to five problem sources plus `imap_ok`, `storage_ok`, and the last bounded storage error.
 
@@ -146,7 +148,15 @@ The ingestion flow uses a parsedmarc `save_callback`:
 
 If SQLite persistence fails, the callback returns failure. The App configures a very high unsaved-retry limit (`2147483647`) so a temporary storage problem does not normally cause parsedmarc to give up and archive/delete an unpersisted source message.
 
-Duplicate report deliveries/retries are suppressed by a stable report fingerprint, so the same report does not double the statistics.
+Before a batch is accepted, every aggregate report must provide mapping-valued `report_metadata` and `policy_published` sections, non-empty organization, report-ID, and policy-domain values, parseable begin/end timestamps, and an end timestamp that is not earlier than its begin timestamp. An invalid report rolls back the whole batch, so the source message remains available for retry or investigation.
+
+Duplicate report deliveries/retries are suppressed by a stable SHA-256 fingerprint of the canonical complete report content. Exact redeliveries therefore do not double the statistics, while reports that reuse the same identity metadata but have different contents remain distinct.
+
+## Startup reclassification and database migrations
+
+On startup, the App initializes the SQLite schema and applies ordered transactional migrations to the current schema version. A new database is created at the current version; an existing database is migrated in order. Missing, malformed, or newer-than-supported schema versions are rejected rather than overwritten.
+
+Immediately after initialization and before daily maintenance or the first metrics snapshot, stored aggregate rows are re-evaluated using the current ordered `known_sources` rules. This makes configuration changes take effect for both latest-period and rolling metrics without re-importing reports. Rows that are already correctly classified are not rewritten.
 
 ## Storage and retention
 
@@ -173,7 +183,7 @@ dmarc_monitor/state
 dmarc_monitor/diagnostics
 ```
 
-Discovery, state, diagnostics, and availability are retained with QoS 1. If MQTT goes offline, the most recent SQLite-derived snapshot remains recoverable; the App republishes after reconnect and after the Home Assistant MQTT `online` birth message.
+Discovery, state, diagnostics, and availability are retained with QoS 1. If MQTT goes offline or a publish fails, the most recent SQLite-derived snapshot remains cached for recovery; the App marks the publisher disconnected, retries publisher startup during mailbox retry cycles, and republishes after reconnect and after the Home Assistant MQTT `online` birth message. MQTT errors never reject a batch that SQLite has committed.
 
 ## Local installation on Home Assistant OS
 
@@ -183,8 +193,8 @@ Until this App is published in a public custom repository, install it as a Local
 2. Open **Settings → Apps → App Store** and refresh/reload Local Apps.
 3. Open **DMARC Monitor** and build/install it.
 4. Configure the IMAP options and, optionally, `known_sources`.
-5. Start the App. `boot: auto` makes it start automatically on subsequent host boots.
-6. Check the App logs and then **Settings → Devices & services → MQTT** for the **DMARC Monitor** device and its sixteen entities.
+5. Start the App. `boot: auto` makes it start automatically on subsequent host boots. Existing stored reports are reclassified against the configured rules at this point.
+6. Check the App logs and then **Settings → Devices & services → MQTT** for the **DMARC Monitor** device and its sixteen entities, including the freshness and data-stale indicators.
 
 ### Later: custom repository
 

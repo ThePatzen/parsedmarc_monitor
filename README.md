@@ -12,4 +12,6 @@ The App automatically obtains its MQTT service credentials from Home Assistant. 
 
 Parsed report metadata is retained locally in `/data/dmarc.sqlite3`; the default retention is **90 days**. Source report emails are moved from the configured report folder to the configured archive folder only after SQLite accepts the parsed batch.
 
+At startup, the App validates stored schema versions, reclassifies retained rows against the current `known_sources` rules, and exposes data freshness through Home Assistant. A report is considered stale when no successful ingestion or report end time is available, or when its newest reporting interval ended more than 48 hours ago.
+
 See the **Documentation** tab for the full option and entity reference.
