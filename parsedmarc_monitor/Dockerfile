@@ -15,6 +15,7 @@ COPY rootfs/app /app
 COPY tests /tests
 COPY pyproject.toml /pyproject.toml
 COPY config.yaml Dockerfile requirements.txt /addon/
+COPY DOCS.md /addon/DOCS.md
 ENV PYTHONPATH="/app"
 ENTRYPOINT ["/opt/venv/bin/python3"]
 CMD ["-m", "pytest", "/tests", "-q"]
