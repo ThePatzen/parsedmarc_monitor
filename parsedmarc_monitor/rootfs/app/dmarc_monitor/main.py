@@ -13,6 +13,7 @@ from .db import Database
 from .mailbox import MailboxRunner
 from .metrics import build_metrics, run_daily_maintenance
 from .mqtt import MqttPublisher
+from .web import WebServer
 
 OPTIONS_PATH = Path("/data/options.json")
 DATABASE_PATH = Path("/data/dmarc.sqlite3")
@@ -39,6 +40,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _configure_logging(settings.log_level)
     database = Database(DATABASE_PATH)
     publisher: MqttPublisher | None = None
+    web_server: WebServer | None = None
 
     try:
         database.initialize()
@@ -50,6 +52,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             __version__,
             snapshot_provider=lambda: build_metrics(database),
         )
+        web_server = WebServer(database)
+        web_server.start()
         publisher.start()
         publisher.publish_snapshot(build_metrics(database))
 
@@ -69,6 +73,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         LOGGER.error("DMARC Monitor stopped after runtime error (%s): %s", type(exc).__name__, " ".join(str(exc).split())[:300])
         return 1
     finally:
+        if web_server is not None:
+            web_server.stop()
         if publisher is not None:
             publisher.stop()
 

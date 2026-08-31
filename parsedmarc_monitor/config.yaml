@@ -9,6 +9,10 @@ init: false
 startup: application
 boot: auto
 stage: experimental
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:email-search-outline
+panel_title: DMARC Zustellungen
 services:
   - mqtt:need
 backup: cold

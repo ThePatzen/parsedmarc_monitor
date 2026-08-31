@@ -127,6 +127,31 @@ class FakePublisher:
 
     def stop(self) -> None:
         self.stopped = True
+        FakeWebServer.calls.append("mqtt_stop")
+
+
+class FakeWebServer:
+    instances: list["FakeWebServer"] = []
+    calls: list[str] = []
+    raise_on_start = False
+
+    def __init__(self, database: object, host: str = "0.0.0.0", port: int = 8099) -> None:
+        self.database = database
+        self.host = host
+        self.port = port
+        self.started = False
+        self.stopped = False
+        FakeWebServer.instances.append(self)
+
+    def start(self) -> None:
+        FakeWebServer.calls.append("web_start")
+        if FakeWebServer.raise_on_start:
+            raise RuntimeError("web unavailable")
+        self.started = True
+
+    def stop(self) -> None:
+        FakeWebServer.calls.append("web_stop")
+        self.stopped = True
 
 
 class FakeRunner:
@@ -142,6 +167,7 @@ class FakeRunner:
 
     def run_forever(self) -> None:
         self.ran = True
+        FakeWebServer.calls.append("runner")
 
 
 def test_main_constructs_lifecycle_in_order_and_stops_publisher(monkeypatch) -> None:
@@ -151,6 +177,9 @@ def test_main_constructs_lifecycle_in_order_and_stops_publisher(monkeypatch) -> 
     FakeDatabase.instances.clear()
     FakePublisher.instances.clear()
     FakeRunner.instances.clear()
+    FakeWebServer.instances.clear()
+    FakeWebServer.calls = calls
+    FakeWebServer.raise_on_start = False
     settings = _settings()
     mqtt = MqttSettings("mqtt", 1883, "user", "password")
     rebuilt_snapshot = object()
@@ -171,6 +200,7 @@ def test_main_constructs_lifecycle_in_order_and_stops_publisher(monkeypatch) -> 
     )
     monkeypatch.setattr(module, "build_metrics", lambda db: calls.append("metrics") or rebuilt_snapshot)
     monkeypatch.setattr(module, "MqttPublisher", FakePublisher)
+    monkeypatch.setattr(module, "WebServer", FakeWebServer)
     monkeypatch.setattr(module, "MailboxRunner", FakeRunner)
     monkeypatch.setattr(module.signal, "signal", lambda *args: None)
 
@@ -179,13 +209,75 @@ def test_main_constructs_lifecycle_in_order_and_stops_publisher(monkeypatch) -> 
     database = FakeDatabase.instances[-1]
     publisher = FakePublisher.instances[-1]
     runner = FakeRunner.instances[-1]
+    web = FakeWebServer.instances[-1]
     assert result == 0
     assert database.initialized is True
     assert publisher.started is True
     assert publisher.snapshots == [rebuilt_snapshot]
     assert runner.ran is True
     assert publisher.stopped is True
-    assert calls[:5] == ["settings", "mqtt_settings", "reclassify", "maintenance", "metrics"]
+    assert web.started is True
+    assert web.stopped is True
+    assert calls == [
+        "settings",
+        "mqtt_settings",
+        "reclassify",
+        "maintenance",
+        "web_start",
+        "metrics",
+        "runner",
+        "web_stop",
+        "mqtt_stop",
+    ]
+
+
+def test_main_lifecycle_cleans_up_web_and_publisher_when_web_start_fails(monkeypatch) -> None:
+    import dmarc_monitor.main as module
+
+    calls: list[str] = []
+    FakeDatabase.instances.clear()
+    FakePublisher.instances.clear()
+    FakeRunner.instances.clear()
+    FakeWebServer.instances.clear()
+    FakeWebServer.calls = calls
+    FakeWebServer.raise_on_start = True
+    settings = _settings()
+    mqtt = MqttSettings("mqtt", 1883, "user", "password")
+
+    monkeypatch.setattr(module, "load_settings", lambda path: calls.append("settings") or settings)
+    monkeypatch.setattr(module, "load_mqtt_settings", lambda env: calls.append("mqtt_settings") or mqtt)
+    monkeypatch.setattr(module, "Database", FakeDatabase)
+    monkeypatch.setattr(
+        FakeDatabase,
+        "reclassify_sources",
+        lambda database, known_sources: calls.append("reclassify") or 0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "run_daily_maintenance",
+        lambda db, retention_days: calls.append("maintenance") or True,
+    )
+    monkeypatch.setattr(module, "MqttPublisher", FakePublisher)
+    monkeypatch.setattr(module, "WebServer", FakeWebServer)
+
+    result = main([])
+
+    publisher = FakePublisher.instances[-1]
+    web = FakeWebServer.instances[-1]
+    assert result == 1
+    assert publisher.stopped is True
+    assert web.started is False
+    assert web.stopped is True
+    assert calls == [
+        "settings",
+        "mqtt_settings",
+        "reclassify",
+        "maintenance",
+        "web_start",
+        "web_stop",
+        "mqtt_stop",
+    ]
 
 
 def test_main_returns_nonzero_for_invalid_startup_config(monkeypatch) -> None:
