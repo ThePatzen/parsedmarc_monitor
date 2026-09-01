@@ -150,13 +150,14 @@ beide Grenzen sind eingeschlossen.
 Use the outcome filter to show all rows, **Fehlerhaft** rows, or **Erfolgreich**
 rows. The search field matches sender IP, reverse DNS, known-source name,
 Header-From, and Envelope-From.
-Failed groups are ordered first, then successful groups, with the newest report
-date and largest message count used as tie-breakers. Each row shows its
-`Nachrichtenanzahl` and can be expanded to inspect report organization,
-report ID, policy domain, Header-From, Envelope-From, source details,
-authentication results, and source classification. Pagination keeps larger
-result sets manageable; use the previous/next controls to move through the
-matching rows.
+Failed groups are ordered first, then by interval end descending, then stable
+row ID descending. Each summary row shows the report date and interval,
+`Header-From`, source IP and reverse DNS, known-source name,
+`Nachrichtenanzahl`, and DMARC/SPF/DKIM results. Expand a row to inspect the
+reporting organization, report ID, policy domain, exact interval, Envelope-From,
+disposition, alignment results, source name, ASN/AS name, country, base domain,
+and source classification. Pagination keeps larger result sets manageable; use
+the previous/next controls to move through the matching rows.
 
 Rows are **aggregierte Gruppen und keine einzelnen E-Mails**: one row is a
 summary for a source and reporting interval, and its message count represents

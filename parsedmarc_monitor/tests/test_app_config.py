@@ -25,6 +25,9 @@ def test_docker_image_copies_application_tree_with_static_assets() -> None:
 
     assert "COPY rootfs/app /app" in dockerfile
     assert "COPY config.yaml Dockerfile requirements.txt /addon/" in dockerfile
+    assert "RUN apk add --no-cache nodejs" in dockerfile
+    runtime_stage = dockerfile.split("FROM ${BUILD_FROM} AS runtime", 1)[1]
+    assert "nodejs" not in runtime_stage
     assert (APP_ROOT / "dmarc_monitor/static/index.html").is_file()
 
 
@@ -65,3 +68,16 @@ def test_docs_define_browser_local_calendar_default_range() -> None:
         "browser's local calendar date: it covers today plus the preceding six "
         "local calendar dates, inclusive"
     ) in docs
+
+
+def test_docs_describe_delivery_order_and_summary_vs_expanded_fields() -> None:
+    docs = " ".join((ROOT / "DOCS.md").read_text(encoding="utf-8").split())
+    normalized = docs.lower()
+
+    assert (
+        "failed groups are ordered first, then by interval end descending, "
+        "then stable row id descending"
+    ) in normalized
+    assert "each summary row shows" in normalized
+    assert "expand a row" in normalized
+    assert "largest message count used as tie-breakers" not in normalized

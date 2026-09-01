@@ -40,7 +40,7 @@ const STRINGS = {
   },
 };
 
-const ui = {
+const ui = typeof document === "undefined" ? null : {
   form: document.getElementById("filters-form"),
   dateFrom: document.getElementById("date-from"),
   dateTo: document.getElementById("date-to"),
@@ -69,6 +69,18 @@ function defaultRange(now = new Date()) {
   const start = new Date(end);
   start.setDate(start.getDate() - 6);
   return { dateFrom: localIsoDate(start), dateTo: localIsoDate(end) };
+}
+
+function paginationState(payload, loading = false) {
+  const total = Number(payload.total);
+  const page = Number(payload.page);
+  const pageSize = Number(payload.page_size);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  return {
+    totalPages,
+    previousDisabled: loading || page <= 1,
+    nextDisabled: loading || total === 0 || page >= totalPages,
+  };
 }
 
 function buildQuery(filters) {
@@ -211,7 +223,8 @@ function renderPagination(payload) {
   while (ui.pagination.firstChild) {
     ui.pagination.removeChild(ui.pagination.firstChild);
   }
-  const totalPages = Math.max(1, Math.ceil(payload.total / payload.page_size));
+  const state = paginationState(payload);
+  const totalPages = state.totalPages;
   const info = document.createElement("span");
   info.className = "pagination-info";
   text(info, `${STRINGS.de.page} ${payload.page} ${STRINGS.de.of} ${totalPages} · ${payload.total} ${STRINGS.de.total}`);
@@ -222,7 +235,8 @@ function renderPagination(payload) {
   previous.type = "button";
   previous.id = "previous-page";
   text(previous, STRINGS.de.previous);
-  previous.disabled = payload.page <= 1;
+  previous.dataset.boundaryDisabled = String(state.previousDisabled);
+  previous.disabled = state.previousDisabled;
   previous.addEventListener("click", () => loadDeliveries({ ...activeFilters, page: payload.page - 1 }));
   actions.append(previous);
 
@@ -230,7 +244,8 @@ function renderPagination(payload) {
   next.type = "button";
   next.id = "next-page";
   text(next, STRINGS.de.next);
-  next.disabled = payload.page >= totalPages;
+  next.dataset.boundaryDisabled = String(state.nextDisabled);
+  next.disabled = state.nextDisabled;
   next.addEventListener("click", () => loadDeliveries({ ...activeFilters, page: payload.page + 1 }));
   actions.append(next);
   ui.pagination.append(info, actions);
@@ -245,7 +260,7 @@ function setFormDisabled(disabled) {
 function setControlsDisabled(disabled) {
   setFormDisabled(disabled);
   ui.pagination.querySelectorAll("button").forEach((button) => {
-    button.disabled = disabled;
+    button.disabled = disabled || button.dataset.boundaryDisabled === "true";
   });
 }
 
@@ -313,15 +328,28 @@ function init() {
   loadDeliveries(activeFilters);
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
-} else {
-  init();
+if (typeof document !== "undefined") {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 }
 
-globalThis.localIsoDate = localIsoDate;
-globalThis.defaultRange = defaultRange;
-globalThis.buildQuery = buildQuery;
-globalThis.renderRows = renderRows;
-globalThis.renderPagination = renderPagination;
-globalThis.loadDeliveries = loadDeliveries;
+const frontendApi = {
+  localIsoDate,
+  defaultRange,
+  paginationState,
+  buildQuery,
+  renderRows,
+  renderPagination,
+  loadDeliveries,
+};
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = frontendApi;
+}
+
+if (typeof globalThis !== "undefined") {
+  Object.assign(globalThis, frontendApi);
+}

@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r /tmp/requirements.txt
 
 FROM builder AS test
+RUN apk add --no-cache nodejs
 COPY requirements-dev.txt /tmp/requirements-dev.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-dev.txt
 COPY rootfs/app /app
