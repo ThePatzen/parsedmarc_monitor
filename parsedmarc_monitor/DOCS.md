@@ -154,10 +154,13 @@ Failed groups are ordered first, then by interval end descending, then stable
 row ID descending. Each summary row shows the report date and interval,
 `Header-From`, source IP and reverse DNS, known-source name,
 `Nachrichtenanzahl`, and DMARC/SPF/DKIM results. Expand a row to inspect the
-reporting organization, report ID, policy domain, exact interval, Envelope-From,
-disposition, alignment results, source name, ASN/AS name, country, base domain,
-and source classification. Pagination keeps larger result sets manageable; use
-the previous/next controls to move through the matching rows.
+reporting organization, report ID, report contact, generator, XML schema,
+parser hints, policy domain and settings (`p`, `sp`, `pct`, `adkim`, `aspf`,
+`fo`, `np`), exact interval, Envelope-From/To, disposition, alignment results,
+source name/type, ASN/AS name/domain, country, base domain, policy overrides,
+individual DKIM/SPF authentication results, and source classification.
+Pagination keeps larger result sets manageable; use the previous/next controls
+to move through the matching rows.
 
 Rows are **aggregierte Gruppen und keine einzelnen E-Mails**: one row is a
 summary for a source and reporting interval, and its message count represents
@@ -197,7 +200,7 @@ The database is stored at:
 
 `/data` is the private writable data area of the Home Assistant App and is included in App backups. The database file is created with private file permissions. Daily maintenance removes reports whose reporting interval ended before the configured `retention_days` cutoff.
 
-Stored fields contain normalized DMARC metadata such as report organization/domain, source IP, reverse DNS, message count, DMARC alignment/result, classification, and known-source name. IMAP passwords and MQTT credentials are **not** database columns.
+Stored fields contain normalized DMARC metadata such as report organization/domain, report diagnostics, published policy settings, source IP, reverse DNS, message count, DMARC alignment/result, detailed DKIM/SPF results, classification, and known-source name. JSON columns are limited to parsed report hints and authentication result lists; raw email bodies are not stored. IMAP passwords and MQTT credentials are **not** database columns.
 
 ## MQTT behavior
 
@@ -227,7 +230,7 @@ Until this App is published in a public custom repository, install it as a Local
 
 ### Later: custom repository
 
-Once this project is published at a real Git repository URL, that URL can be added as a custom App repository and normal repository-based installs/updates can be used. This v0.3.0 package intentionally does not claim a repository URL that does not yet exist.
+Once this project is published at a real Git repository URL, that URL can be added as a custom App repository and normal repository-based installs/updates can be used. This v0.4.0 package intentionally does not claim a repository URL that does not yet exist.
 
 ## Troubleshooting
 
@@ -266,4 +269,4 @@ Inspect the binary sensor attributes and distinguish:
 
 ## Privacy
 
-DMARC aggregate reports contain operational metadata about mail flows. This App keeps normalized source IP/domain/report metadata in local SQLite and publishes only bounded summary/diagnostic data to the local MQTT broker. It does not persist IMAP or MQTT credentials in SQLite, and it does not store raw email bodies as part of the database schema.
+DMARC aggregate reports contain operational metadata about mail flows. This App keeps normalized source IP/domain/report metadata, published policy settings, parser diagnostics, and authentication result lists in local SQLite and publishes only bounded summary/diagnostic data to the local MQTT broker. It does not persist IMAP or MQTT credentials in SQLite, and it does not store raw email bodies as part of the database schema.

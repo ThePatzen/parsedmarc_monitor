@@ -35,6 +35,37 @@ const STRINGS = {
     country: "Land",
     baseDomain: "Basis-Domain",
     classification: "Klassifizierung",
+    reportDetails: "Report",
+    reportContact: "Reporting-Kontakt",
+    reportSupport: "Zusätzliche Kontaktinfo",
+    reportGenerator: "Report-Generator",
+    reportErrors: "Report-Hinweise",
+    xmlSchema: "XML-Schema",
+    xmlNamespace: "XML-Namespace",
+    originalTimespan: "Originaler Zeitraum (Sekunden)",
+    timespanRequiresNormalization: "Zeitraum musste normalisiert werden",
+    intervalNormalized: "Intervall normalisiert",
+    policyDetails: "Veröffentlichte Policy",
+    policyAdkim: "DKIM-Ausrichtungsvorgabe",
+    policyAspf: "SPF-Ausrichtungsvorgabe",
+    policyP: "Policy (p)",
+    policySp: "Subdomain-Policy (sp)",
+    policyPct: "Anteil (pct)",
+    policyFo: "Fehleroption (fo)",
+    policyNp: "Nonexistent-Domain-Policy (np)",
+    policyTesting: "Testmodus",
+    policyDiscovery: "Policy-Ermittlung",
+    identityDetails: "Nachrichten-Identität",
+    envelopeTo: "Envelope-To",
+    sourceDetails: "Quelle",
+    sourceType: "Quellentyp",
+    sourceAsDomain: "AS-Domain",
+    authenticationDetails: "Authentifizierung",
+    policyOverrideReasons: "Policy-Übersteuerungen",
+    dkimAuthResults: "DKIM-Einzelprüfungen",
+    spfAuthResults: "SPF-Einzelprüfungen",
+    yes: "Ja",
+    no: "Nein",
     aligned: "ausgerichtet",
     notAligned: "nicht ausgerichtet",
   },
@@ -153,29 +184,109 @@ function detailLine(list, label, value) {
   list.append(term, description);
 }
 
+function detailList(list, label, values, formatter) {
+  const term = document.createElement("dt");
+  text(term, label);
+  const description = document.createElement("dd");
+  const items = document.createElement("ul");
+  items.className = "detail-values";
+  const entries = Array.isArray(values) && values.length > 0 ? values : [null];
+  entries.forEach((value) => {
+    const item = document.createElement("li");
+    text(item, value === null ? STRINGS.de.missing : formatter(value));
+    items.append(item);
+  });
+  description.append(items);
+  list.append(term, description);
+}
+
+function formatAuthenticationResult(value, secondaryKey) {
+  const parts = [value.domain, value[secondaryKey], value.result]
+    .filter((part) => part !== null && part !== undefined && part !== "")
+    .map((part) => String(part));
+  if (value.human_result) {
+    parts.push(String(value.human_result));
+  }
+  return parts.length > 0 ? parts.join(" · ") : STRINGS.de.missing;
+}
+
+function formatPolicyOverride(value) {
+  const parts = [value.type, value.comment]
+    .filter((part) => part !== null && part !== undefined && part !== "")
+    .map((part) => String(part));
+  return parts.length > 0 ? parts.join(" · ") : STRINGS.de.missing;
+}
+
+function detailSection(title, render) {
+  const section = document.createElement("section");
+  section.className = "detail-section";
+  const heading = document.createElement("h3");
+  heading.className = "detail-section-title";
+  text(heading, title);
+  const list = document.createElement("dl");
+  list.className = "detail-list";
+  render(list);
+  section.append(heading, list);
+  return section;
+}
+
 function detailsElement(item) {
   const details = document.createElement("details");
   const summary = document.createElement("summary");
   text(summary, STRINGS.de.details);
   details.append(summary);
 
-  const list = document.createElement("dl");
-  list.className = "detail-list";
-  detailLine(list, STRINGS.de.reportingOrg, item.reporting_org);
-  detailLine(list, STRINGS.de.reportId, item.report_id);
-  detailLine(list, STRINGS.de.policyDomain, item.policy_domain);
-  detailLine(list, STRINGS.de.exactInterval, `${displayValue(item.interval_begin)} – ${displayValue(item.interval_end)}`);
-  detailLine(list, STRINGS.de.envelopeFrom, item.envelope_from);
-  detailLine(list, STRINGS.de.disposition, item.disposition);
-  detailLine(list, STRINGS.de.dkimAlignment, item.dkim_aligned ? STRINGS.de.aligned : STRINGS.de.notAligned);
-  detailLine(list, STRINGS.de.spfAlignment, item.spf_aligned ? STRINGS.de.aligned : STRINGS.de.notAligned);
-  detailLine(list, STRINGS.de.sourceName, item.source_name);
-  detailLine(list, STRINGS.de.asn, item.source_asn);
-  detailLine(list, STRINGS.de.asName, item.source_as_name);
-  detailLine(list, STRINGS.de.country, item.source_country);
-  detailLine(list, STRINGS.de.baseDomain, item.source_base_domain);
-  detailLine(list, STRINGS.de.classification, item.classification);
-  details.append(list);
+  details.append(
+    detailSection(STRINGS.de.reportDetails, (list) => {
+      detailLine(list, STRINGS.de.reportingOrg, item.reporting_org);
+      detailLine(list, STRINGS.de.reportId, item.report_id);
+      detailLine(list, STRINGS.de.exactInterval, `${displayValue(item.interval_begin)} – ${displayValue(item.interval_end)}`);
+      detailLine(list, STRINGS.de.reportContact, item.report_org_email);
+      detailLine(list, STRINGS.de.reportSupport, item.report_org_extra_contact_info);
+      detailLine(list, STRINGS.de.reportGenerator, item.report_generator);
+      detailLine(list, STRINGS.de.xmlSchema, item.xml_schema);
+      detailLine(list, STRINGS.de.xmlNamespace, item.xml_namespace);
+      detailList(list, STRINGS.de.reportErrors, item.report_errors, (value) => value);
+      detailLine(list, STRINGS.de.originalTimespan, item.original_timespan_seconds);
+      detailLine(list, STRINGS.de.timespanRequiresNormalization, item.timespan_requires_normalization ? STRINGS.de.yes : STRINGS.de.no);
+      detailLine(list, STRINGS.de.intervalNormalized, item.normalized_timespan ? STRINGS.de.yes : STRINGS.de.no);
+    }),
+    detailSection(STRINGS.de.policyDetails, (list) => {
+      detailLine(list, STRINGS.de.policyDomain, item.policy_domain);
+      detailLine(list, STRINGS.de.policyP, item.policy_p);
+      detailLine(list, STRINGS.de.policySp, item.policy_sp);
+      detailLine(list, STRINGS.de.policyPct, item.policy_pct);
+      detailLine(list, STRINGS.de.policyAdkim, item.policy_adkim);
+      detailLine(list, STRINGS.de.policyAspf, item.policy_aspf);
+      detailLine(list, STRINGS.de.policyFo, item.policy_fo);
+      detailLine(list, STRINGS.de.policyNp, item.policy_np);
+      detailLine(list, STRINGS.de.policyTesting, item.policy_testing);
+      detailLine(list, STRINGS.de.policyDiscovery, item.policy_discovery_method);
+      detailLine(list, STRINGS.de.disposition, item.disposition);
+    }),
+    detailSection(STRINGS.de.identityDetails, (list) => {
+      detailLine(list, STRINGS.de.headerFrom, item.header_from);
+      detailLine(list, STRINGS.de.envelopeFrom, item.envelope_from);
+      detailLine(list, STRINGS.de.envelopeTo, item.envelope_to);
+    }),
+    detailSection(STRINGS.de.sourceDetails, (list) => {
+      detailLine(list, STRINGS.de.sourceName, item.source_name);
+      detailLine(list, STRINGS.de.sourceType, item.source_type);
+      detailLine(list, STRINGS.de.asn, item.source_asn);
+      detailLine(list, STRINGS.de.asName, item.source_as_name);
+      detailLine(list, STRINGS.de.sourceAsDomain, item.source_as_domain);
+      detailLine(list, STRINGS.de.country, item.source_country);
+      detailLine(list, STRINGS.de.baseDomain, item.source_base_domain);
+    }),
+    detailSection(STRINGS.de.authenticationDetails, (list) => {
+      detailLine(list, STRINGS.de.dkimAlignment, item.dkim_aligned ? STRINGS.de.aligned : STRINGS.de.notAligned);
+      detailLine(list, STRINGS.de.spfAlignment, item.spf_aligned ? STRINGS.de.aligned : STRINGS.de.notAligned);
+      detailLine(list, STRINGS.de.classification, item.classification);
+      detailList(list, STRINGS.de.policyOverrideReasons, item.policy_override_reasons, formatPolicyOverride);
+      detailList(list, STRINGS.de.dkimAuthResults, item.dkim_auth_results, (value) => formatAuthenticationResult(value, "selector", "selector"));
+      detailList(list, STRINGS.de.spfAuthResults, item.spf_auth_results, (value) => formatAuthenticationResult(value, "scope", "scope"));
+    }),
+  );
   return details;
 }
 

@@ -19,4 +19,5 @@ See the **Documentation** tab for the full option and entity reference.
 The App also includes a Home Assistant **Web UI** for reviewing aggregate
 delivery groups. Filter the inclusive date range, outcome, and sender search;
 failed groups are shown first and each row can be expanded for its report and
-authentication details.
+authentication details, including the published policy, report diagnostics,
+and individual DKIM/SPF results when the sender provides them.

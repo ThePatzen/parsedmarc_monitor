@@ -240,6 +240,25 @@ summary {
   font-weight: 650;
 }
 
+.detail-section {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--divider);
+}
+
+.detail-section:first-of-type {
+  margin-top: 0.75rem;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.detail-section-title {
+  margin: 0 0 0.55rem;
+  color: var(--text);
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+}
+
 .detail-list {
   display: grid;
   grid-template-columns: minmax(8rem, auto) 1fr;
@@ -255,6 +274,17 @@ summary {
 
 .detail-list dd {
   margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-values {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.detail-values li {
   overflow-wrap: anywhere;
 }
 

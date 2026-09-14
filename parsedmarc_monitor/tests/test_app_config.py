@@ -46,8 +46,8 @@ def test_release_metadata_and_delivery_view_documentation_are_consistent() -> No
     )["__version__"]
     docs = (ROOT / "DOCS.md").read_text(encoding="utf-8")
 
-    assert config["version"] == "0.3.0"
-    assert version == "0.3.0"
+    assert config["version"] == "0.4.0"
+    assert version == "0.4.0"
     for phrase in (
         "Web UI",
         "letzten sieben",

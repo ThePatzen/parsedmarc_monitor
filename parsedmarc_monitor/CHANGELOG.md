@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- Added extended aggregate-report details for published policy settings,
+  report diagnostics, source metadata, policy overrides, and individual
+  DKIM/SPF authentication results.
+- Added a schema migration that preserves existing reports while exposing the
+  additional details in the Web UI.
+
 ## 0.3.0
 
 - Added an ingress-served Home Assistant Web UI for delivery detail groups.

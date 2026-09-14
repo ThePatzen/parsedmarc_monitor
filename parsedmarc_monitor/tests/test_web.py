@@ -138,6 +138,46 @@ def sample_item() -> DeliveryDetail:
         dkim_aligned=False,
         spf_aligned=True,
         dmarc_pass=False,
+        report_org_email="reports@receiver.example",
+        report_org_extra_contact_info="https://receiver.example/help",
+        report_generator="Receiver Engine",
+        report_errors=("minor issue",),
+        xml_schema="draft",
+        xml_namespace="urn:example:dmarc",
+        timespan_requires_normalization=False,
+        original_timespan_seconds=86400,
+        policy_adkim="r",
+        policy_aspf="s",
+        policy_p="quarantine",
+        policy_sp="none",
+        policy_pct="100",
+        policy_fo="0",
+        policy_np="reject",
+        policy_testing=None,
+        policy_discovery_method="dmarc",
+        source_type="cloud",
+        source_as_domain="example.org",
+        envelope_to="example.org",
+        policy_override_reasons=(
+            {"type": "local-policy", "comment": "test"},
+        ),
+        dkim_auth_results=(
+            {
+                "domain": "example.org",
+                "selector": "selector1",
+                "result": "fail",
+                "human_result": "invalid signature",
+            },
+        ),
+        spf_auth_results=(
+            {
+                "domain": "bounce.example.org",
+                "scope": "mfrom",
+                "result": "pass",
+                "human_result": None,
+            },
+        ),
+        normalized_timespan=False,
     )
 
 
@@ -272,6 +312,36 @@ def test_frontend_contract_has_mobile_failure_and_focus_styles() -> None:
     assert ".delivery-row.failed" in css
     assert ":focus-visible" in css
     assert "details" in css
+
+
+def test_frontend_contract_renders_extended_report_and_authentication_details() -> None:
+    javascript = (STATIC_ROOT / "app.js").read_text(encoding="utf-8")
+    for marker in (
+        "report_org_email",
+        "report_org_extra_contact_info",
+        "report_generator",
+        "report_errors",
+        "policy_adkim",
+        "policy_aspf",
+        "policy_p",
+        "policy_sp",
+        "policy_pct",
+        "policy_fo",
+        "policy_np",
+        "policy_testing",
+        "policy_discovery_method",
+        "source_type",
+        "source_as_domain",
+        "envelope_to",
+        "policy_override_reasons",
+        "dkim_auth_results",
+        "spf_auth_results",
+        "createElement(\"ul\")",
+    ):
+        assert marker in javascript
+
+    css = (STATIC_ROOT / "app.css").read_text(encoding="utf-8")
+    assert ".detail-section" in css
 
 
 def test_http_deliveries_returns_utf8_json_and_security_headers() -> None:

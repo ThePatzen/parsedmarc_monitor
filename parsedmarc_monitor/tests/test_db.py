@@ -220,6 +220,30 @@ def test_query_deliveries_maps_all_diagnostic_fields(tmp_path: Path) -> None:
         "dkim_aligned": False,
         "spf_aligned": False,
         "dmarc_pass": False,
+        "report_org_email": None,
+        "report_org_extra_contact_info": None,
+        "report_generator": None,
+        "report_errors": (),
+        "xml_schema": "draft",
+        "xml_namespace": None,
+        "timespan_requires_normalization": False,
+        "original_timespan_seconds": None,
+        "policy_adkim": None,
+        "policy_aspf": None,
+        "policy_p": None,
+        "policy_sp": None,
+        "policy_pct": None,
+        "policy_fo": None,
+        "policy_np": None,
+        "policy_testing": None,
+        "policy_discovery_method": None,
+        "source_type": None,
+        "source_as_domain": None,
+        "envelope_to": None,
+        "policy_override_reasons": (),
+        "dkim_auth_results": (),
+        "spf_auth_results": (),
+        "normalized_timespan": False,
     }
     assert asdict(passed) == {
         "id": passed.id,
@@ -247,7 +271,130 @@ def test_query_deliveries_maps_all_diagnostic_fields(tmp_path: Path) -> None:
         "dkim_aligned": True,
         "spf_aligned": True,
         "dmarc_pass": True,
+        "report_org_email": None,
+        "report_org_extra_contact_info": None,
+        "report_generator": None,
+        "report_errors": (),
+        "xml_schema": "draft",
+        "xml_namespace": None,
+        "timespan_requires_normalization": False,
+        "original_timespan_seconds": None,
+        "policy_adkim": None,
+        "policy_aspf": None,
+        "policy_p": None,
+        "policy_sp": None,
+        "policy_pct": None,
+        "policy_fo": None,
+        "policy_np": None,
+        "policy_testing": None,
+        "policy_discovery_method": None,
+        "source_type": None,
+        "source_as_domain": None,
+        "envelope_to": None,
+        "policy_override_reasons": (),
+        "dkim_auth_results": (),
+        "spf_auth_results": (),
+        "normalized_timespan": False,
     }
+
+
+def test_query_deliveries_maps_extended_report_and_authentication_details(
+    tmp_path: Path,
+) -> None:
+    db = Database(tmp_path / "dmarc.sqlite3")
+    db.initialize()
+    report = load_fixture()
+    report["report_metadata"].update(
+        {
+            "org_email": "reports@receiver.example",
+            "org_extra_contact_info": "https://receiver.example/dmarc-help",
+            "generator": "Receiver DMARC Engine",
+            "timespan_requires_normalization": True,
+            "original_timespan_seconds": 172800,
+            "errors": ["minor schema extension"],
+        }
+    )
+    report["policy_published"].update(
+        {
+            "adkim": "s",
+            "aspf": "s",
+            "p": "quarantine",
+            "sp": "reject",
+            "pct": "50",
+            "fo": "1:d",
+            "np": "reject",
+            "testing": "true",
+            "discovery_method": "dmarc",
+        }
+    )
+    record = report["records"][1]
+    record["source"].update({"type": "cloud", "as_domain": "unknown.example"})
+    record["policy_evaluated"]["policy_override_reasons"] = [
+        {"type": "local-policy", "comment": "internal test"}
+    ]
+    record["identifiers"]["envelope_to"] = "recipient.example"
+    record["auth_results"] = {
+        "dkim": [
+            {
+                "domain": "example.at",
+                "selector": "selector1",
+                "result": "fail",
+                "human_result": "signature did not verify",
+            }
+        ],
+        "spf": [
+            {
+                "domain": "spoof.invalid",
+                "scope": "mfrom",
+                "result": "fail",
+                "human_result": "not authorized",
+            }
+        ],
+    }
+    record["normalized_timespan"] = True
+    db.persist_batch({"aggregate_reports": [report]}, rules())
+
+    item = db.query_deliveries("2026-08-29", "2026-08-29").items[0]
+
+    assert item.report_org_email == "reports@receiver.example"
+    assert item.report_org_extra_contact_info == "https://receiver.example/dmarc-help"
+    assert item.report_generator == "Receiver DMARC Engine"
+    assert item.report_errors == ("minor schema extension",)
+    assert item.xml_schema == "draft"
+    assert item.original_timespan_seconds == 172800
+    assert item.timespan_requires_normalization is True
+    assert item.policy_adkim == "s"
+    assert item.policy_aspf == "s"
+    assert item.policy_p == "quarantine"
+    assert item.policy_sp == "reject"
+    assert item.policy_pct == "50"
+    assert item.policy_fo == "1:d"
+    assert item.policy_np == "reject"
+    assert item.policy_testing == "true"
+    assert item.policy_discovery_method == "dmarc"
+    assert item.source_type == "cloud"
+    assert item.source_as_domain == "unknown.example"
+    assert item.envelope_to == "recipient.example"
+    assert item.normalized_timespan is True
+    assert item.policy_override_reasons == (
+        {"type": "local-policy", "comment": "internal test"},
+    )
+    assert item.dkim_auth_results == (
+        {
+            "domain": "example.at",
+            "selector": "selector1",
+            "result": "fail",
+            "human_result": "signature did not verify",
+        },
+    )
+    assert item.spf_auth_results == (
+        {
+            "domain": "spoof.invalid",
+            "scope": "mfrom",
+            "result": "fail",
+            "human_result": "not authorized",
+        },
+    )
 
 
 @pytest.mark.parametrize(
@@ -338,6 +485,36 @@ def create_realistic_v1_database(path: Path) -> None:
         }
         if "fingerprint_version" in columns:
             connection.execute("ALTER TABLE reports DROP COLUMN fingerprint_version")
+        for table, column in (
+            ("reports", "org_email"),
+            ("reports", "org_extra_contact_info"),
+            ("reports", "generator"),
+            ("reports", "xml_namespace"),
+            ("reports", "report_errors"),
+            ("reports", "timespan_requires_normalization"),
+            ("reports", "original_timespan_seconds"),
+            ("reports", "policy_adkim"),
+            ("reports", "policy_aspf"),
+            ("reports", "policy_p"),
+            ("reports", "policy_sp"),
+            ("reports", "policy_pct"),
+            ("reports", "policy_fo"),
+            ("reports", "policy_np"),
+            ("reports", "policy_testing"),
+            ("reports", "policy_discovery_method"),
+            ("aggregate_rows", "source_type"),
+            ("aggregate_rows", "source_as_domain"),
+            ("aggregate_rows", "envelope_to"),
+            ("aggregate_rows", "policy_override_reasons"),
+            ("aggregate_rows", "dkim_auth_results"),
+            ("aggregate_rows", "spf_auth_results"),
+            ("aggregate_rows", "normalized_timespan"),
+        ):
+            table_columns = {
+                row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if column in table_columns:
+                connection.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
         connection.execute(
             "UPDATE meta SET value = '1' WHERE key = 'schema_version'"
         )
@@ -353,7 +530,7 @@ def test_initialize_creates_schema_and_private_database(tmp_path: Path) -> None:
 
     mode = stat.S_IMODE(path.stat().st_mode)
     assert mode == 0o600
-    assert db.get_meta("schema_version") == "2"
+    assert db.get_meta("schema_version") == "3"
     with sqlite3.connect(path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"reports", "aggregate_rows", "meta"} <= tables
@@ -416,7 +593,7 @@ def test_migrated_v1_exact_redelivery_is_singular_but_changed_content_is_distinc
         {"aggregate_reports": [changed]}, rules()
     )
 
-    assert db.get_meta("schema_version") == "2"
+    assert db.get_meta("schema_version") == "3"
     assert exact_redelivery.reports_inserted == 0
     assert exact_redelivery.rows_inserted == 0
     assert changed_delivery.reports_inserted == 1

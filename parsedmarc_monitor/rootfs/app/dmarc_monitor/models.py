@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from ipaddress import IPv4Network, IPv6Network
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +88,30 @@ class DeliveryDetail:
     dkim_aligned: bool
     spf_aligned: bool
     dmarc_pass: bool
+    report_org_email: str | None
+    report_org_extra_contact_info: str | None
+    report_generator: str | None
+    report_errors: tuple[str, ...]
+    xml_schema: str | None
+    xml_namespace: str | None
+    timespan_requires_normalization: bool
+    original_timespan_seconds: int | None
+    policy_adkim: str | None
+    policy_aspf: str | None
+    policy_p: str | None
+    policy_sp: str | None
+    policy_pct: str | None
+    policy_fo: str | None
+    policy_np: str | None
+    policy_testing: str | None
+    policy_discovery_method: str | None
+    source_type: str | None
+    source_as_domain: str | None
+    envelope_to: str | None
+    policy_override_reasons: tuple[dict[str, Any], ...]
+    dkim_auth_results: tuple[dict[str, Any], ...]
+    spf_auth_results: tuple[dict[str, Any], ...]
+    normalized_timespan: bool
 
 
 @dataclass(frozen=True, slots=True)

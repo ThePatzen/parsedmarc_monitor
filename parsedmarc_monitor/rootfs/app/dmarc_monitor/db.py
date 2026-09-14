@@ -19,7 +19,7 @@ from .models import (
     ProblemSource,
 )
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 Migration = Callable[[sqlite3.Connection], None]
 
 _CURRENT_SCHEMA_SCRIPT = """
@@ -34,6 +34,22 @@ CREATE TABLE IF NOT EXISTS reports (
     end_ts INTEGER NOT NULL,
     received_ts INTEGER NOT NULL,
     raw_schema TEXT,
+    xml_namespace TEXT,
+    org_email TEXT,
+    org_extra_contact_info TEXT,
+    generator TEXT,
+    report_errors TEXT NOT NULL DEFAULT '[]',
+    timespan_requires_normalization INTEGER NOT NULL DEFAULT 0,
+    original_timespan_seconds INTEGER,
+    policy_adkim TEXT,
+    policy_aspf TEXT,
+    policy_p TEXT,
+    policy_sp TEXT,
+    policy_pct TEXT,
+    policy_fo TEXT,
+    policy_np TEXT,
+    policy_testing TEXT,
+    policy_discovery_method TEXT,
     created_at INTEGER NOT NULL
 );
 
@@ -47,18 +63,25 @@ CREATE TABLE IF NOT EXISTS aggregate_rows (
     source_asn INTEGER,
     source_as_name TEXT,
     source_country TEXT,
+    source_type TEXT,
+    source_as_domain TEXT,
     interval_begin_ts INTEGER NOT NULL,
     interval_end_ts INTEGER NOT NULL,
     report_date TEXT NOT NULL,
     message_count INTEGER NOT NULL,
     header_from TEXT NOT NULL,
     envelope_from TEXT,
+    envelope_to TEXT,
     disposition TEXT,
     dkim_result TEXT,
     spf_result TEXT,
     dkim_aligned INTEGER NOT NULL,
     spf_aligned INTEGER NOT NULL,
     dmarc_pass INTEGER NOT NULL,
+    policy_override_reasons TEXT NOT NULL DEFAULT '[]',
+    dkim_auth_results TEXT NOT NULL DEFAULT '[]',
+    spf_auth_results TEXT NOT NULL DEFAULT '[]',
+    normalized_timespan INTEGER NOT NULL DEFAULT 0,
     known_source INTEGER NOT NULL,
     known_source_name TEXT,
     FOREIGN KEY(report_id_fk) REFERENCES reports(id) ON DELETE CASCADE
@@ -86,7 +109,42 @@ def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
     )
 
 
-MIGRATIONS: dict[int, Migration] = {1: _migrate_v1_to_v2}
+def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
+    """Store the additional normalized fields exposed by parsedmarc."""
+    report_columns = (
+        ("xml_namespace", "TEXT"),
+        ("org_email", "TEXT"),
+        ("org_extra_contact_info", "TEXT"),
+        ("generator", "TEXT"),
+        ("report_errors", "TEXT NOT NULL DEFAULT '[]'"),
+        ("timespan_requires_normalization", "INTEGER NOT NULL DEFAULT 0"),
+        ("original_timespan_seconds", "INTEGER"),
+        ("policy_adkim", "TEXT"),
+        ("policy_aspf", "TEXT"),
+        ("policy_p", "TEXT"),
+        ("policy_sp", "TEXT"),
+        ("policy_pct", "TEXT"),
+        ("policy_fo", "TEXT"),
+        ("policy_np", "TEXT"),
+        ("policy_testing", "TEXT"),
+        ("policy_discovery_method", "TEXT"),
+    )
+    row_columns = (
+        ("source_type", "TEXT"),
+        ("source_as_domain", "TEXT"),
+        ("envelope_to", "TEXT"),
+        ("policy_override_reasons", "TEXT NOT NULL DEFAULT '[]'"),
+        ("dkim_auth_results", "TEXT NOT NULL DEFAULT '[]'"),
+        ("spf_auth_results", "TEXT NOT NULL DEFAULT '[]'"),
+        ("normalized_timespan", "INTEGER NOT NULL DEFAULT 0"),
+    )
+    for column, definition in report_columns:
+        connection.execute(f"ALTER TABLE reports ADD COLUMN {column} {definition}")
+    for column, definition in row_columns:
+        connection.execute(f"ALTER TABLE aggregate_rows ADD COLUMN {column} {definition}")
+
+
+MIGRATIONS: dict[int, Migration] = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3}
 
 
 class Database:
@@ -217,6 +275,48 @@ class Database:
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     @staticmethod
+    def _optional_text(value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
+    def _json_array(value: Any) -> str:
+        if not isinstance(value, list):
+            value = []
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _optional_integer(value: Any) -> int | None:
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _decode_json_array(value: Any) -> tuple[dict[str, Any], ...]:
+        try:
+            decoded = json.loads(value) if isinstance(value, str) else value
+        except (TypeError, ValueError):
+            return ()
+        if not isinstance(decoded, list):
+            return ()
+        return tuple(item for item in decoded if isinstance(item, dict))
+
+    @staticmethod
+    def _decode_json_strings(value: Any) -> tuple[str, ...]:
+        try:
+            decoded = json.loads(value) if isinstance(value, str) else value
+        except (TypeError, ValueError):
+            return ()
+        if not isinstance(decoded, list):
+            return ()
+        return tuple(item for item in decoded if isinstance(item, str))
+
+    @staticmethod
     def _legacy_report_fingerprint(report: Mapping[str, Any]) -> str:
         metadata = report["report_metadata"]
         policy = report["policy_published"]
@@ -277,8 +377,13 @@ class Database:
                     INSERT OR IGNORE INTO reports(
                         report_fingerprint, fingerprint_version,
                         org_name, report_id, policy_domain,
-                        begin_ts, end_ts, received_ts, raw_schema, created_at
-                    ) VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, ?)
+                        begin_ts, end_ts, received_ts, raw_schema, created_at,
+                        xml_namespace, org_email, org_extra_contact_info, generator,
+                        report_errors, timespan_requires_normalization,
+                        original_timespan_seconds, policy_adkim, policy_aspf,
+                        policy_p, policy_sp, policy_pct, policy_fo, policy_np,
+                        policy_testing, policy_discovery_method
+                    ) VALUES (?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         fingerprint,
@@ -290,6 +395,22 @@ class Database:
                         received_ts,
                         str(report.get("xml_schema") or ""),
                         received_ts,
+                        self._optional_text(report.get("xml_namespace")),
+                        self._optional_text(metadata.get("org_email")),
+                        self._optional_text(metadata.get("org_extra_contact_info")),
+                        self._optional_text(metadata.get("generator")),
+                        self._json_array(metadata.get("errors")),
+                        int(bool(metadata.get("timespan_requires_normalization", False))),
+                        self._optional_integer(metadata.get("original_timespan_seconds")),
+                        self._optional_text(policy.get("adkim")),
+                        self._optional_text(policy.get("aspf")),
+                        self._optional_text(policy.get("p")),
+                        self._optional_text(policy.get("sp")),
+                        self._optional_text(policy.get("pct")),
+                        self._optional_text(policy.get("fo")),
+                        self._optional_text(policy.get("np")),
+                        self._optional_text(policy.get("testing")),
+                        self._optional_text(policy.get("discovery_method")),
                     ),
                 )
                 if cursor.rowcount == 0:
@@ -304,6 +425,9 @@ class Database:
                     alignment = record.get("alignment") or {}
                     policy_evaluated = record.get("policy_evaluated") or {}
                     identifiers = record.get("identifiers") or {}
+                    auth_results = record.get("auth_results") or {}
+                    if not isinstance(auth_results, Mapping):
+                        auth_results = {}
                     source_ip = str(source.get("ip_address") or "")
                     reverse_dns_value = source.get("reverse_dns")
                     reverse_dns = str(reverse_dns_value) if reverse_dns_value else None
@@ -321,10 +445,13 @@ class Database:
                         INSERT INTO aggregate_rows(
                             report_id_fk, source_ip, source_reverse_dns, source_base_domain,
                             source_name, source_asn, source_as_name, source_country,
+                            source_type, source_as_domain,
                             interval_begin_ts, interval_end_ts, report_date, message_count,
-                            header_from, envelope_from, disposition, dkim_result, spf_result,
-                            dkim_aligned, spf_aligned, dmarc_pass, known_source, known_source_name
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            header_from, envelope_from, envelope_to, disposition,
+                            dkim_result, spf_result, dkim_aligned, spf_aligned, dmarc_pass,
+                            policy_override_reasons, dkim_auth_results, spf_auth_results,
+                            normalized_timespan, known_source, known_source_name
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             report_fk,
@@ -335,18 +462,25 @@ class Database:
                             source.get("asn"),
                             source.get("as_name"),
                             source.get("country"),
+                            self._optional_text(source.get("type")),
+                            self._optional_text(source.get("as_domain")),
                             interval_begin_ts,
                             interval_end_ts,
                             report_date,
                             message_count,
                             str(identifiers.get("header_from") or ""),
-                            identifiers.get("envelope_from"),
+                            self._optional_text(identifiers.get("envelope_from")),
+                            self._optional_text(identifiers.get("envelope_to")),
                             policy_evaluated.get("disposition"),
                             policy_evaluated.get("dkim"),
                             policy_evaluated.get("spf"),
                             int(bool(alignment.get("dkim", False))),
                             int(bool(alignment.get("spf", False))),
                             int(dmarc_pass),
+                            self._json_array(policy_evaluated.get("policy_override_reasons")),
+                            self._json_array(auth_results.get("dkim")),
+                            self._json_array(auth_results.get("spf")),
+                            int(bool(record.get("normalized_timespan", False))),
                             int(known_source_name is not None),
                             known_source_name,
                         ),
@@ -521,8 +655,7 @@ class Database:
             params.extend([f"%{escaped}%"] * 5)
         return " AND ".join(clauses), tuple(params)
 
-    @staticmethod
-    def _delivery_detail(row: sqlite3.Row) -> DeliveryDetail:
+    def _delivery_detail(self, row: sqlite3.Row) -> DeliveryDetail:
         classification = ("known_" if row["known_source"] else "unknown_") + (
             "pass" if row["dmarc_pass"] else "fail"
         )
@@ -554,6 +687,34 @@ class Database:
             dkim_aligned=bool(row["dkim_aligned"]),
             spf_aligned=bool(row["spf_aligned"]),
             dmarc_pass=bool(row["dmarc_pass"]),
+            report_org_email=row["org_email"],
+            report_org_extra_contact_info=row["org_extra_contact_info"],
+            report_generator=row["generator"],
+            report_errors=self._decode_json_strings(row["report_errors"]),
+            xml_schema=row["xml_schema"],
+            xml_namespace=row["xml_namespace"],
+            timespan_requires_normalization=bool(row["timespan_requires_normalization"]),
+            original_timespan_seconds=(
+                int(row["original_timespan_seconds"])
+                if row["original_timespan_seconds"] is not None
+                else None
+            ),
+            policy_adkim=row["policy_adkim"],
+            policy_aspf=row["policy_aspf"],
+            policy_p=row["policy_p"],
+            policy_sp=row["policy_sp"],
+            policy_pct=row["policy_pct"],
+            policy_fo=row["policy_fo"],
+            policy_np=row["policy_np"],
+            policy_testing=row["policy_testing"],
+            policy_discovery_method=row["policy_discovery_method"],
+            source_type=row["source_type"],
+            source_as_domain=row["source_as_domain"],
+            envelope_to=row["envelope_to"],
+            policy_override_reasons=self._decode_json_array(row["policy_override_reasons"]),
+            dkim_auth_results=self._decode_json_array(row["dkim_auth_results"]),
+            spf_auth_results=self._decode_json_array(row["spf_auth_results"]),
+            normalized_timespan=bool(row["normalized_timespan"]),
         )
 
     def query_deliveries(
@@ -574,7 +735,13 @@ class Database:
         with self._connect() as connection:
             total = int(connection.execute("SELECT COUNT(*) " + base, params).fetchone()[0])
             rows = connection.execute(
-                "SELECT a.*, r.org_name, r.report_id, r.policy_domain " + base
+                "SELECT a.*, r.org_name, r.report_id, r.policy_domain, "
+                "r.raw_schema AS xml_schema, "
+                "r.xml_namespace, r.org_email, r.org_extra_contact_info, r.generator, "
+                "r.report_errors, r.timespan_requires_normalization, "
+                "r.original_timespan_seconds, r.policy_adkim, r.policy_aspf, "
+                "r.policy_p, r.policy_sp, r.policy_pct, r.policy_fo, r.policy_np, "
+                "r.policy_testing, r.policy_discovery_method " + base
                 + " ORDER BY a.dmarc_pass ASC, a.interval_end_ts DESC, a.id DESC LIMIT ? OFFSET ?",
                 params + (page_size, (page - 1) * page_size),
             ).fetchall()
